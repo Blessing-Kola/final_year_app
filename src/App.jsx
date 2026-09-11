@@ -10,7 +10,7 @@ import {
   NotFoundPage,
   ForbiddenPage,
   ServerErrorPage,
-} from "./pages/public/PublicPages";
+} from "./pages/public";
 import { useAuth } from "./context/useAuth";
 
 const StudentDashboardPage = lazy(() =>
