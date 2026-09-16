@@ -27,10 +27,8 @@ export function RegisterPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.email.endsWith("@university.edu.ng")) {
-      setError(
-        "Please use your institutional email ending in @university.edu.ng",
-      );
+    if (!form.email.endsWith(".edu.ng")) {
+      setError("Please use your institutional email ending in .edu.ng");
       setSuccess("");
       return;
     }
