@@ -329,7 +329,7 @@ export function StudentDocumentsPage() {
             <div className="mt-5 space-y-3 rounded-xl border border-slate-200 p-4">
               {previewDocuments.map((document) => (
                 <div
-                  key={document._id}
+                  key={document.id}
                   className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"
                 >
                   <div>

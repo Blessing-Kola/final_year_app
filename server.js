@@ -1,16 +1,13 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-import mongoose from "mongoose";
+import "dotenv/config";
 import multer from "multer";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import path from "path";
 import fs from "fs";
-import { randomUUID } from "crypto";
 import { fileURLToPath } from "url";
-
-dotenv.config();
+import { supabase } from "./src/services/supabaseServer.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -32,34 +29,6 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 
-const userSchema = new mongoose.Schema({
-    firstName: String,
-    lastName: String,
-    email: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    role: { type: String, enum: ["student", "supervisor", "coordinator"], default: "student" },
-    department: String,
-    studentId: String,
-    createdAt: { type: Date, default: Date.now },
-});
-
-const documentSchema = new mongoose.Schema({
-    filename: String,
-    originalName: String,
-    mimeType: String,
-    size: Number,
-    path: String,
-    uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    uploadedAt: { type: Date, default: Date.now },
-});
-
-const User = mongoose.model("User", userSchema);
-const Document = mongoose.model("Document", documentSchema);
-
-let mongoReady = false;
-let memoryUsers = [];
-let memoryDocuments = [];
-
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
     const token = authHeader && authHeader.split(" ")[1];
@@ -78,10 +47,10 @@ const authenticateToken = (req, res, next) => {
 };
 
 const createToken = (user) =>
-    jwt.sign({ id: user._id ? user._id.toString() : user.id, role: user.role, email: user.email }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "1d" });
+    jwt.sign({ id: user.id, role: user.role, email: user.email }, process.env.JWT_SECRET || "dev-secret", { expiresIn: "1d" });
 
 const normalizeUser = (user) => ({
-    id: user._id ? user._id.toString() : user.id,
+    id: user.id,
     firstName: user.firstName,
     lastName: user.lastName,
     name: [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || user.email,
@@ -92,7 +61,7 @@ const normalizeUser = (user) => ({
 });
 
 const normalizeDocument = (document) => ({
-    id: document._id ? document._id.toString() : document.id,
+    id: document.id,
     filename: document.filename,
     originalName: document.originalName,
     mimeType: document.mimeType,
@@ -103,55 +72,53 @@ const normalizeDocument = (document) => ({
 });
 
 const findUserByEmail = async (email) => {
-    if (mongoReady) {
-        return User.findOne({ email });
-    }
-    return memoryUsers.find((user) => user.email === email) || null;
+    const { data, error } = await supabase
+        .from("users")
+        .select("*")
+        .eq("email", email)
+        .maybeSingle();
+    if (error) throw error;
+    return data;
 };
 
 const findUserById = async (id) => {
-    if (mongoReady) {
-        return User.findById(id).select("-password");
-    }
-    return memoryUsers.find((user) => user.id === id) || null;
+    const { data, error } = await supabase
+        .from("users")
+        .select("*")
+        .eq("id", id)
+        .maybeSingle();
+    if (error) throw error;
+    return data;
 };
 
 const createUser = async (userData) => {
-    if (mongoReady) {
-        return User.create(userData);
-    }
-
-    const user = {
-        id: randomUUID(),
-        ...userData,
-        createdAt: new Date(),
-    };
-    memoryUsers.push(user);
-    return user;
+    const { data, error } = await supabase
+        .from("users")
+        .insert(userData)
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
 };
 
 const createDocumentRecord = async (documentData) => {
-    if (mongoReady) {
-        return Document.create(documentData);
-    }
-
-    const document = {
-        id: randomUUID(),
-        ...documentData,
-        uploadedAt: new Date(),
-    };
-    memoryDocuments.push(document);
-    return document;
+    const { data, error } = await supabase
+        .from("documents")
+        .insert(documentData)
+        .select()
+        .single();
+    if (error) throw error;
+    return data;
 };
 
 const listDocumentsForUser = async (userId) => {
-    if (mongoReady) {
-        return Document.find({ uploadedBy: userId }).sort({ uploadedAt: -1 });
-    }
-
-    return memoryDocuments
-        .filter((document) => document.uploadedBy === userId)
-        .sort((first, second) => new Date(second.uploadedAt) - new Date(first.uploadedAt));
+    const { data, error } = await supabase
+        .from("documents")
+        .select("*")
+        .eq("uploadedBy", userId)
+        .order("uploadedAt", { ascending: false });
+    if (error) throw error;
+    return data;
 };
 
 app.get("/health", (req, res) => res.json({ status: "ok" }));
@@ -253,16 +220,4 @@ app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
-const connectToDatabase = async () => {
-    try {
-        await mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/thesishub");
-        mongoReady = true;
-        console.log("MongoDB connected");
-    } catch (error) {
-        console.warn("MongoDB unavailable, using memory store", error.message);
-    }
-};
-
-connectToDatabase().finally(() => {
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -27,9 +27,9 @@ export function RegisterPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.email.endsWith("@university.edu")) {
+    if (!form.email.endsWith("@university.edu.ng")) {
       setError(
-        "Please use your institutional email ending in @university.edu.",
+        "Please use your institutional email ending in @university.edu.ng",
       );
       setSuccess("");
       return;
@@ -112,7 +112,7 @@ export function RegisterPage() {
             value={form.email}
             onChange={handleChange}
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-            placeholder="name@university.edu"
+            placeholder="name@university.edu.ng"
           />
         </label>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
