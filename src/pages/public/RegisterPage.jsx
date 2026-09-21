@@ -124,6 +124,7 @@ export function RegisterPage() {
             <option value="student">Student</option>
             <option value="supervisor">Supervisor</option>
             <option value="coordinator">Course coordinator</option>
+            <option value="examiner">Examiner</option>
           </select>
         </label>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">

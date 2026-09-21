@@ -1,15 +1,20 @@
 import { Link } from "react-router-dom";
 import {} from "lucide-react";
+import { usePortalData } from "../../hooks/usePortalData";
 
 export default function SupervisorDashboard() {
+  const { data } = usePortalData();
+  const students = data?.students ?? [];
+  const reviews = data?.reviews ?? [];
+  const meetings = data?.meetings ?? [];
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[
-          { label: "Assigned students", value: "14" },
-          { label: "Pending reviews", value: "5" },
-          { label: "Meetings this week", value: "3" },
-          { label: "Cohort avg. progress", value: "78%" },
+          { label: "Assigned students", value: students.length },
+          { label: "Pending reviews", value: reviews.filter((review) => review.status === "pending").length },
+          { label: "Meetings", value: meetings.length },
+          { label: "Assigned projects", value: data?.projects?.length ?? 0 },
         ].map((metric) => (
           <div
             key={metric.label}
@@ -37,25 +42,28 @@ export default function SupervisorDashboard() {
             </Link>
           </div>
           <div className="space-y-3">
-            {[
-              { student: "Ada Bello", chapter: "Chapter 4", days: "2 days" },
-              { student: "Kofi Mensah", chapter: "Proposal", days: "1 day" },
-            ].map((item) => (
+            {reviews.filter((review) => review.status === "pending").map((item) => {
+              const student = students.find((entry) => entry.id === item.studentId);
+              return (
               <div
-                key={item.student}
+                key={item.id}
                 className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
               >
                 <div>
-                  <p className="font-medium text-slate-900">{item.student}</p>
+                  <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
                   <p className="text-sm text-slate-500">
-                    {item.chapter} • {item.days} waiting
+                    {item.type} • awaiting review
                   </p>
                 </div>
                 <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
                   Review
                 </button>
               </div>
-            ))}
+            );
+            })}
+            {!reviews.filter((review) => review.status === "pending").length ? (
+              <p className="text-sm text-slate-500">No pending reviews.</p>
+            ) : null}
           </div>
         </div>
 
@@ -64,28 +72,21 @@ export default function SupervisorDashboard() {
             Upcoming meetings
           </h2>
           <div className="mt-4 space-y-3">
-            {[
-              {
-                student: "Ada Bello",
-                datetime: "Jun 18 • 10:00",
-                topic: "Chapter 4 feedback",
-              },
-              {
-                student: "Kofi Mensah",
-                datetime: "Jun 20 • 14:00",
-                topic: "Proposal revision",
-              },
-            ].map((meeting) => (
+            {meetings.map((meeting) => {
+              const student = students.find((entry) => entry.id === meeting.studentId);
+              return (
               <div
-                key={meeting.student}
+                key={meeting.id}
                 className="rounded-xl border border-slate-200 p-3"
               >
-                <p className="font-medium text-slate-900">{meeting.student}</p>
+                <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  {meeting.datetime} • {meeting.topic}
+                  {new Date(meeting.scheduledAt).toLocaleString()} • {meeting.topic}
                 </p>
               </div>
-            ))}
+            );
+            })}
+            {!meetings.length ? <p className="text-sm text-slate-500">No meetings scheduled.</p> : null}
           </div>
         </div>
       </div>
@@ -94,6 +95,9 @@ export default function SupervisorDashboard() {
 }
 
 export function SupervisorStudentsPage() {
+  const { data } = usePortalData();
+  const students = data?.students ?? [];
+  const projects = data?.projects ?? [];
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -108,22 +112,9 @@ export function SupervisorStudentsPage() {
         </div>
       </div>
       <div className="space-y-3">
-        {[
-          {
-            name: "Ada Bello",
-            id: "20261170",
-            project: "Smart campus energy dashboard",
-            stage: "Chapter review",
-            progress: "78%",
-          },
-          {
-            name: "Kofi Mensah",
-            id: "20261171",
-            project: "AI-assisted field survey",
-            stage: "Proposal",
-            progress: "42%",
-          },
-        ].map((student) => (
+        {students.map((student) => {
+          const project = projects.find((item) => item.studentId === student.id);
+          return (
           <div
             key={student.id}
             className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between"
@@ -131,29 +122,34 @@ export function SupervisorStudentsPage() {
             <div>
               <p className="font-semibold text-slate-900">{student.name}</p>
               <p className="text-sm text-slate-500">
-                {student.id} • {student.project}
+                {student.studentId || student.email} • {project?.title || "No project"}
               </p>
             </div>
             <div className="flex items-center gap-3">
               <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                {student.stage}
+                {project?.stage || "Not started"}
               </span>
-              <span className="text-sm text-slate-500">{student.progress}</span>
+              <span className="text-sm text-slate-500">{project?.progress ?? 0}%</span>
               <Link
-                to="/app/supervisor/students/1"
+                to={`/app/supervisor/students/${student.id}`}
                 className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700"
               >
                 View
               </Link>
             </div>
           </div>
-        ))}
+          );
+        })}
+        {!students.length ? <p className="text-sm text-slate-500">No students have been assigned.</p> : null}
       </div>
     </div>
   );
 }
 
 export function SupervisorReviewsPage() {
+  const { data } = usePortalData();
+  const reviews = data?.reviews ?? [];
+  const students = data?.students ?? [];
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -168,46 +164,38 @@ export function SupervisorReviewsPage() {
         </div>
       </div>
       <div className="space-y-3">
-        {[
-          {
-            student: "Ada Bello",
-            type: "Chapter",
-            date: "Jun 12",
-            days: "2 days",
-          },
-          {
-            student: "Kofi Mensah",
-            type: "Proposal",
-            date: "Jun 10",
-            days: "4 days",
-          },
-        ].map((item) => (
+        {reviews.map((item) => {
+          const student = students.find((entry) => entry.id === item.studentId);
+          return (
           <div
-            key={item.student}
+            key={item.id}
             className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
           >
             <div>
-              <p className="font-medium text-slate-900">{item.student}</p>
+              <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
               <p className="text-sm text-slate-500">
-                {item.type} submitted {item.date}
+                {item.type} submitted {new Date(item.submittedAt).toLocaleDateString()}
               </p>
             </div>
             <div className="flex items-center gap-3">
               <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                {item.days}
+                {item.status}
               </span>
               <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
                 Open review
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
+        {!reviews.length ? <p className="text-sm text-slate-500">No reviews assigned.</p> : null}
       </div>
     </div>
   );
 }
 
 export function SupervisorFeedbackPage() {
+  const { data } = usePortalData();
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">
@@ -219,8 +207,9 @@ export function SupervisorFeedbackPage() {
             Student
           </label>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-            <option>Ada Bello</option>
-            <option>Kofi Mensah</option>
+            {(data?.students ?? []).map((student) => (
+              <option key={student.id} value={student.id}>{student.name}</option>
+            ))}
           </select>
         </div>
         <div>
@@ -254,20 +243,28 @@ export function SupervisorFeedbackPage() {
 }
 
 export function SupervisorSchedulingPage() {
+  const { data } = usePortalData();
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Scheduling</h2>
       <p className="mt-2 text-sm text-slate-500">
         Calendar view and upcoming meetings for your assigned students.
       </p>
-      <div className="mt-5 rounded-2xl border border-slate-200 p-5">
-        Calendar preview placeholder
+      <div className="mt-5 space-y-3">
+        {(data?.meetings ?? []).map((meeting) => (
+          <div key={meeting.id} className="rounded-xl border border-slate-200 p-4">
+            <p className="font-medium text-slate-900">{meeting.topic}</p>
+            <p className="text-sm text-slate-500">{new Date(meeting.scheduledAt).toLocaleString()}</p>
+          </div>
+        ))}
+        {!data?.meetings?.length ? <p className="text-sm text-slate-500">No meetings scheduled.</p> : null}
       </div>
     </div>
   );
 }
 
 export function SupervisorEvaluationPage() {
+  const { data } = usePortalData();
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Evaluation</h2>
@@ -277,8 +274,9 @@ export function SupervisorEvaluationPage() {
             Student
           </label>
           <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-            <option>Ada Bello</option>
-            <option>Kofi Mensah</option>
+            {(data?.students ?? []).map((student) => (
+              <option key={student.id} value={student.id}>{student.name}</option>
+            ))}
           </select>
         </div>
         <div className="space-y-2">

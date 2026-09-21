@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { authApi } from "../services/api";
 import { AuthContext } from "./AuthContextValue";
 
+const INACTIVITY_TIMEOUT = 10 * 60 * 1000;
+
 const normalizeUser = (user) => {
   if (!user) return null;
 
@@ -57,6 +59,42 @@ export function AuthProvider({ children }) {
 
     initializeAuth();
   }, []);
+
+  useEffect(() => {
+    if (!user) return undefined;
+
+    let timeoutId;
+    const clearSession = () => {
+      window.localStorage.removeItem("thesishub-token");
+      window.localStorage.removeItem("thesishub-user");
+      setUser(null);
+    };
+    const resetTimeout = () => {
+      window.clearTimeout(timeoutId);
+      timeoutId = window.setTimeout(clearSession, INACTIVITY_TIMEOUT);
+    };
+    const activityEvents = [
+      "keydown",
+      "mousedown",
+      "pointerdown",
+      "scroll",
+      "touchstart",
+      "mousemove",
+      "focus",
+    ];
+
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, resetTimeout, { passive: true });
+    });
+    resetTimeout();
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, resetTimeout);
+      });
+    };
+  }, [user]);
 
   const value = useMemo(
     () => ({

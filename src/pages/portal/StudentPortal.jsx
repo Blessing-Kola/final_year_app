@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   CheckCircle2,
@@ -8,18 +8,9 @@ import {
   UploadCloud,
   BellRing,
 } from "lucide-react";
-import { documentsApi } from "../../services/api";
-
-const metrics = [
-  {
-    label: "Project stage",
-    value: "Chapter review — stage 3 of 6",
-    tone: "indigo",
-  },
-  { label: "Chapters submitted", value: "3 / 5", tone: "slate" },
-  { label: "Days to deadline", value: "14", tone: "amber" },
-  { label: "Overall grade", value: "Not released", tone: "slate" },
-];
+import { activitiesApi, documentsApi, supervisorApi } from "../../services/api";
+import { usePortalData } from "../../hooks/usePortalData";
+import { useAuth } from "../../context/useAuth";
 
 const timeline = [
   "Proposal",
@@ -30,13 +21,34 @@ const timeline = [
   "Final submission",
 ];
 
-const notifications = [
-  { title: "Supervisor feedback received", time: "10m ago", tone: "indigo" },
-  { title: "Chapter 4 uploaded", time: "1h ago", tone: "emerald" },
-  { title: "Defense venue updated", time: "2h ago", tone: "amber" },
-];
-
 export function StudentDashboard() {
+  const [activities, setActivities] = useState([]);
+  const [supervisorRequest, setSupervisorRequest] = useState(null);
+  const { data } = usePortalData();
+  const project = data?.project;
+  const chapters = data?.chapters ?? [];
+  const metrics = [
+    { label: "Project stage", value: project?.stage || "Not started" },
+    {
+      label: "Chapters submitted",
+      value: `${chapters.filter((chapter) => chapter.status === "submitted").length} / ${chapters.length}`,
+    },
+    { label: "Deadline", value: project?.deadline || "Not set" },
+    { label: "Overall grade", value: project?.grade || "Not released" },
+  ];
+
+  useEffect(() => {
+    activitiesApi
+      .list()
+      .then((response) => setActivities(response.activities ?? []))
+      .catch(() => setActivities([]));
+
+    supervisorApi
+      .getRequest()
+      .then((response) => setSupervisorRequest(response.request ?? null))
+      .catch(() => setSupervisorRequest(null));
+  }, []);
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -61,15 +73,17 @@ export function StudentDashboard() {
             </div>
             <div>
               <h2 className="font-semibold text-slate-900">
-                Upload Chapter 4 — Methodology before June 18
+                {project ? `Continue ${project.title}` : "Set up your project"}
               </h2>
               <p className="text-sm text-slate-600">
-                Your draft is ready for supervisor review.
+                {project?.stage || "Choose a topic to begin your project."}
               </p>
             </div>
           </div>
           <Link
-            to="/app/student/documents/upload"
+            to={
+              project ? "/app/student/documents/upload" : "/app/student/project"
+            }
             className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
           >
             Upload now <ArrowRight size={15} />
@@ -84,12 +98,17 @@ export function StudentDashboard() {
               <h2 className="text-lg font-semibold text-slate-900">
                 Project timeline
               </h2>
-              <p className="text-sm text-slate-500">Current progress</p>
+              <p className="text-sm text-slate-500">
+                {project ? `${project.progress}% complete` : "No project yet"}
+              </p>
             </div>
             <div className="flex flex-wrap gap-3">
               {timeline.map((step, index) => {
-                const completed = index < 4;
-                const active = index === 4;
+                const completed = project
+                  ? index <
+                    Math.floor((project.progress / 100) * timeline.length)
+                  : false;
+                const active = Boolean(project) && !completed && index === 0;
                 return (
                   <div
                     key={step}
@@ -122,9 +141,9 @@ export function StudentDashboard() {
               </Link>
             </div>
             <div className="space-y-3">
-              {notifications.map((item) => (
+              {activities.slice(0, 3).map((item) => (
                 <div
-                  key={item.title}
+                  key={item.id}
                   className="flex items-start gap-3 rounded-xl border border-slate-200 p-3"
                 >
                   <div
@@ -134,10 +153,13 @@ export function StudentDashboard() {
                   </div>
                   <div className="flex-1">
                     <p className="font-medium text-slate-900">{item.title}</p>
-                    <p className="text-sm text-slate-500">{item.time}</p>
+                    <p className="text-sm text-slate-500">{item.body}</p>
                   </div>
                 </div>
               ))}
+              {!activities.length ? (
+                <p className="text-sm text-slate-500">No activities yet.</p>
+              ) : null}
             </div>
           </div>
         </div>
@@ -145,29 +167,45 @@ export function StudentDashboard() {
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-indigo-100 font-semibold text-indigo-700">
-              PO
+              {supervisorRequest?.supervisor?.name
+                ?.split(" ")
+                .map((value) => value[0])
+                .join("")
+                .slice(0, 2) || "--"}
             </div>
             <div>
-              <h2 className="font-semibold text-slate-900">Prof. Mercy Osei</h2>
-              <p className="text-sm text-slate-500">Computer Science</p>
+              <h2 className="font-semibold text-slate-900">
+                {supervisorRequest?.supervisor?.name || "Supervisor assignment"}
+              </h2>
+              <p className="text-sm text-slate-500">
+                {supervisorRequest?.supervisor?.department ||
+                  (supervisorRequest
+                    ? "Awaiting coordinator assignment"
+                    : "No request submitted")}
+              </p>
             </div>
           </div>
           <div className="mt-5 space-y-3 text-sm text-slate-600">
             <div className="flex items-center gap-2">
-              <MessageSquare size={15} /> Last message 12 mins ago
+              <MessageSquare size={15} />
+              {supervisorRequest
+                ? supervisorRequest.status === "assigned"
+                  ? "Your supervisor is assigned"
+                  : "Your request is with the coordinator"
+                : "Request a supervisor for your project"}
             </div>
-            <div className="flex items-center gap-2">
-              <CalendarDays size={15} /> Next meeting June 18, 10:00
-            </div>
+            {supervisorRequest?.supervisor ? (
+              <div className="flex items-center gap-2">
+                <CalendarDays size={15} /> Supervisor contact will appear here
+              </div>
+            ) : null}
           </div>
-          <div className="mt-5 flex gap-3">
-            <button className="flex-1 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700">
-              Message
-            </button>
-            <button className="flex-1 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-              View meetings
-            </button>
-          </div>
+          <Link
+            to="/app/student/project"
+            className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white"
+          >
+            {supervisorRequest ? "View request" : "Request supervisor"}
+          </Link>
         </div>
       </div>
     </div>
@@ -175,6 +213,33 @@ export function StudentDashboard() {
 }
 
 export function StudentProjectPage() {
+  const [supervisorRequest, setSupervisorRequest] = useState(null);
+  const [requestMessage, setRequestMessage] = useState("");
+  const [requestingSupervisor, setRequestingSupervisor] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const { data } = usePortalData();
+
+  useEffect(() => {
+    supervisorApi
+      .getRequest()
+      .then((response) => setSupervisorRequest(response.request ?? null))
+      .catch(() => setSupervisorRequest(null));
+  }, []);
+
+  const handleSupervisorRequest = async () => {
+    setRequestingSupervisor(true);
+    setRequestError("");
+    try {
+      const response = await supervisorApi.request(requestMessage);
+      setSupervisorRequest(response.request);
+      setRequestMessage("");
+    } catch (error) {
+      setRequestError(error.message || "Unable to submit supervisor request.");
+    } finally {
+      setRequestingSupervisor(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -198,42 +263,70 @@ export function StudentProjectPage() {
           </button>
         </div>
       </div>
+      <div className="mb-6 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="font-semibold text-slate-900">Supervisor request</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {supervisorRequest?.status === "assigned"
+                ? `${supervisorRequest.supervisor?.name} is assigned to your project.`
+                : supervisorRequest
+                  ? "Your request is waiting for a coordinator to assign a supervisor."
+                  : "Ask the coordinator to assign a supervisor to your project."}
+            </p>
+          </div>
+          {!supervisorRequest ? (
+            <button
+              type="button"
+              onClick={handleSupervisorRequest}
+              disabled={requestingSupervisor}
+              className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+            >
+              {requestingSupervisor
+                ? "Sending request..."
+                : "Request supervisor"}
+            </button>
+          ) : null}
+        </div>
+        {!supervisorRequest ? (
+          <textarea
+            value={requestMessage}
+            onChange={(event) => setRequestMessage(event.target.value)}
+            placeholder="Add a note for the coordinator (optional)"
+            className="mt-4 min-h-20 w-full rounded-xl border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          />
+        ) : null}
+        {requestError ? (
+          <p className="mt-2 text-sm text-red-700">{requestError}</p>
+        ) : null}
+      </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {[
-          {
-            title: "Smart campus energy dashboard",
-            department: "Computer Science",
-            availability: "Available",
-          },
-          {
-            title: "Clinical decision support assistant",
-            department: "Information Systems",
-            availability: "Unavailable",
-          },
-          {
-            title: "Autonomous irrigation analytics",
-            department: "Software Engineering",
-            availability: "Available",
-          },
-        ].map((topic) => (
+        {(data?.topics ?? []).map((topic) => (
           <div
             key={topic.title}
-            className={`rounded-2xl border p-4 ${topic.availability === "Available" ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-80"}`}
+            className={`rounded-2xl border p-4 ${topic.availability === "available" ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-80"}`}
           >
             <div className="flex items-center justify-between gap-2">
               <h3 className="font-semibold text-slate-900">{topic.title}</h3>
               <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${topic.availability === "Available" ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-700"}`}
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${topic.availability === "available" ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-700"}`}
               >
                 {topic.availability}
               </span>
             </div>
             <p className="mt-2 text-sm text-slate-600">{topic.department}</p>
             <button className="mt-4 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700">
-              Request topic
+              {topic.availability === "available"
+                ? "Request topic"
+                : "Unavailable"}
             </button>
           </div>
         ))}
+        {!data?.topics?.length ? (
+          <p className="rounded-xl border border-slate-200 p-5 text-sm text-slate-500 md:col-span-2 xl:col-span-3">
+            No project topics are available yet.
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -243,6 +336,7 @@ export function StudentDocumentsPage() {
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState("");
+  const { data } = usePortalData();
 
   const handleUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -273,12 +367,7 @@ export function StudentDocumentsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Chapters</h2>
         <div className="mt-4 space-y-2">
-          {[
-            { title: "Chapter 1 — Introduction", status: "Approved" },
-            { title: "Chapter 2 — Literature review", status: "Under review" },
-            { title: "Chapter 3 — Requirements", status: "Pending" },
-            { title: "Chapter 4 — Methodology", status: "Needs revision" },
-          ].map((chapter) => (
+          {(data?.chapters ?? []).map((chapter) => (
             <button
               key={chapter.title}
               className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-3 text-left"
@@ -291,6 +380,11 @@ export function StudentDocumentsPage() {
               </span>
             </button>
           ))}
+          {!data?.chapters?.length ? (
+            <p className="text-sm text-slate-500">
+              No chapters have been created for your project.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -383,45 +477,37 @@ export function StudentDocumentsPage() {
 }
 
 export function StudentCommunicationPage() {
+  const { data } = usePortalData();
+  const messages = data?.messages ?? [];
+  const supervisorName =
+    data?.supervisorRequest?.supervisor?.name || "Supervisor";
+
   return (
     <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Threads</h2>
         <div className="mt-4 space-y-2">
-          {[
-            {
-              title: "Supervisor discussion",
-              preview: "Please send the revised chapter by Friday.",
-              unread: 2,
-            },
-            {
-              title: "Defense coordination",
-              preview: "The panel has submitted availability.",
-              unread: 0,
-            },
-          ].map((thread) => (
+          {messages.map((message) => (
             <div
-              key={thread.title}
+              key={message.id}
               className="rounded-xl border border-slate-200 p-3"
             >
               <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-slate-900">{thread.title}</p>
-                {thread.unread ? (
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                    {thread.unread}
-                  </span>
-                ) : null}
+                <p className="font-medium text-slate-900">Message</p>
               </div>
-              <p className="mt-1 text-sm text-slate-500">{thread.preview}</p>
+              <p className="mt-1 text-sm text-slate-500">{message.body}</p>
             </div>
           ))}
+          {!messages.length ? (
+            <p className="text-sm text-slate-500">No messages yet.</p>
+          ) : null}
         </div>
       </div>
 
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-200 pb-3">
           <div>
-            <h2 className="font-semibold text-slate-900">Prof. Mercy Osei</h2>
+            <h2 className="font-semibold text-slate-900">{supervisorName}</h2>
             <p className="text-sm text-slate-500">Supervisor</p>
           </div>
           <Link
@@ -432,12 +518,19 @@ export function StudentCommunicationPage() {
           </Link>
         </div>
         <div className="mt-4 space-y-3">
-          <div className="max-w-[80%] rounded-2xl bg-slate-100 p-3 text-sm text-slate-700">
-            I have reviewed the latest draft. Please update Chapter 4.
-          </div>
-          <div className="ml-auto max-w-[80%] rounded-2xl bg-indigo-600 p-3 text-sm text-white">
-            I will upload the revised version before Friday.
-          </div>
+          {messages.map((message) => (
+            <div
+              key={message.id}
+              className={`max-w-[80%] rounded-2xl p-3 text-sm ${message.senderId === message.recipientId ? "bg-slate-100 text-slate-700" : "ml-auto bg-indigo-600 text-white"}`}
+            >
+              {message.body}
+            </div>
+          ))}
+          {!messages.length ? (
+            <p className="text-sm text-slate-500">
+              Start a conversation with your supervisor.
+            </p>
+          ) : null}
         </div>
         <div className="mt-4 flex items-end gap-2 rounded-2xl border border-slate-200 p-3">
           <textarea
@@ -454,6 +547,12 @@ export function StudentCommunicationPage() {
 }
 
 export function StudentDefensePage() {
+  const { data } = usePortalData();
+  const defense = data?.defenses?.[0];
+  const defenseDate = defense?.scheduledAt
+    ? new Date(defense.scheduledAt)
+    : null;
+
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -463,7 +562,9 @@ export function StudentDefensePage() {
               Defense status
             </p>
             <h2 className="text-xl font-semibold text-slate-900">
-              Your defense is on June 28
+              {defenseDate
+                ? `Your defense is on ${defenseDate.toLocaleDateString()}`
+                : "Your defense has not been scheduled"}
             </h2>
           </div>
           <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
@@ -479,49 +580,38 @@ export function StudentDefensePage() {
           <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
             <div>
               <span className="font-medium text-slate-900">Date</span>
-              <p>June 28, 2026</p>
+              <p>
+                {defenseDate ? defenseDate.toLocaleDateString() : "Not set"}
+              </p>
             </div>
             <div>
               <span className="font-medium text-slate-900">Time</span>
-              <p>09:30</p>
+              <p>
+                {defenseDate
+                  ? defenseDate.toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })
+                  : "Not set"}
+              </p>
             </div>
             <div>
               <span className="font-medium text-slate-900">Venue</span>
-              <p>Conference Hall B</p>
+              <p>{defense?.venue || "Not set"}</p>
             </div>
             <div>
               <span className="font-medium text-slate-900">Format</span>
-              <p>In person</p>
+              <p>{defense?.format || "Not set"}</p>
             </div>
           </div>
           <div className="mt-5">
             <h3 className="font-semibold text-slate-900">Panel members</h3>
             <div className="mt-3 space-y-3">
-              {[
-                { name: "Prof. Mercy Osei", role: "Supervisor" },
-                { name: "Dr. John Miles", role: "External reviewer" },
-                { name: "Dr. Amina Yusuf", role: "Second reader" },
-              ].map((member) => (
-                <div
-                  key={member.name}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 font-semibold text-slate-700">
-                      {member.name.split(" ")[0][0]}
-                    </div>
-                    <div>
-                      <p className="font-medium text-slate-900">
-                        {member.name}
-                      </p>
-                      <p className="text-sm text-slate-500">{member.role}</p>
-                    </div>
-                  </div>
-                  <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                    {member.role}
-                  </span>
-                </div>
-              ))}
+              <p className="text-sm text-slate-500">
+                {defense
+                  ? "Panel details will appear when members are assigned."
+                  : "No panel has been assigned yet."}
+              </p>
             </div>
           </div>
         </div>
@@ -557,6 +647,13 @@ export function StudentDefensePage() {
 }
 
 export function StudentAccountPage() {
+  const { user } = useAuth();
+  const initials = [user?.firstName, user?.lastName]
+    .filter(Boolean)
+    .map((value) => value[0])
+    .join("")
+    .slice(0, 2);
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap gap-2 rounded-full bg-slate-100 p-1 text-sm">
@@ -574,11 +671,15 @@ export function StudentAccountPage() {
         <div className="rounded-2xl border border-slate-200 p-5">
           <div className="flex items-center gap-3">
             <div className="flex h-14 w-14 items-center justify-center rounded-full bg-indigo-100 font-semibold text-indigo-700">
-              AB
+              {initials || "U"}
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Ada Bello</p>
-              <p className="text-sm text-slate-500">Student • 20261170</p>
+              <p className="font-semibold text-slate-900">
+                {user?.name || "User"}
+              </p>
+              <p className="text-sm text-slate-500">
+                {user?.role || "student"} • {user?.studentId || "No student ID"}
+              </p>
             </div>
           </div>
           <button className="mt-4 rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700">
@@ -592,7 +693,7 @@ export function StudentAccountPage() {
             </label>
             <input
               className="w-full rounded-xl border border-slate-200 px-3 py-2.5"
-              defaultValue="Ada"
+              defaultValue={user?.firstName || ""}
             />
           </div>
           <div>
@@ -601,7 +702,7 @@ export function StudentAccountPage() {
             </label>
             <input
               className="w-full rounded-xl border border-slate-200 px-3 py-2.5"
-              defaultValue="Bello"
+              defaultValue={user?.lastName || ""}
             />
           </div>
           <div>
@@ -610,7 +711,7 @@ export function StudentAccountPage() {
             </label>
             <input
               className="w-full rounded-xl border border-slate-200 px-3 py-2.5"
-              defaultValue="Computer Science"
+              defaultValue={user?.department || ""}
             />
           </div>
           <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">

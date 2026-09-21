@@ -54,6 +54,12 @@ export function ForbiddenPage() {
 }
 
 export function ServerErrorPage() {
+  const handleLogout = () => {
+    window.localStorage.removeItem("thesishub-token");
+    window.localStorage.removeItem("thesishub-user");
+    window.location.assign("/login");
+  };
+
   return (
     <StatusPageLayout
       code="500"
@@ -62,8 +68,19 @@ export function ServerErrorPage() {
       description="The service is unavailable right now. Please try again shortly."
     >
       <div className="mt-6 flex justify-center gap-3">
-        <button className="rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200">
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200"
+        >
           Try again
+        </button>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700 dark:border-slate-700 dark:text-slate-200"
+        >
+          Log out
         </button>
         <Link
           to="/"

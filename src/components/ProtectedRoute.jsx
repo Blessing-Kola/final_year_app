@@ -9,6 +9,8 @@ const portalHome = (role) => {
       return "/app/supervisor/dashboard";
     case "coordinator":
       return "/app/coordinator/dashboard";
+    case "examiner":
+      return "/app/examiner/dashboard";
     default:
       return "/login";
   }

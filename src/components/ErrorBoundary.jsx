@@ -10,6 +10,12 @@ export class ErrorBoundary extends Component {
     return { hasError: true };
   }
 
+  handleLogout = () => {
+    window.localStorage.removeItem("thesishub-token");
+    window.localStorage.removeItem("thesishub-user");
+    window.location.assign("/login");
+  };
+
   render() {
     if (this.state.hasError) {
       return (
@@ -29,6 +35,12 @@ export class ErrorBoundary extends Component {
               className="mt-5 rounded-xl bg-indigo-600 px-4 py-2 font-medium text-white"
             >
               Try again
+            </button>
+            <button
+              onClick={this.handleLogout}
+              className="ml-3 rounded-xl border border-slate-200 px-4 py-2 font-medium text-slate-700"
+            >
+              Log out
             </button>
           </div>
         </div>

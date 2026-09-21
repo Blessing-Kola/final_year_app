@@ -59,3 +59,27 @@ export const documentsApi = {
     return handleResponse(response);
   },
 };
+
+export const activitiesApi = {
+  list: () => request("/activities"),
+};
+
+export const portalApi = {
+  data: () => request("/portal/data"),
+};
+
+export const supervisorApi = {
+  getRequest: () => request("/supervisor-requests"),
+  request: (message) =>
+    request("/supervisor-requests", {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
+  listRequests: () => request("/supervisor-requests"),
+  listSupervisors: () => request("/users?role=supervisor"),
+  assign: (requestId, supervisorId) =>
+    request(`/supervisor-requests/${requestId}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ supervisorId }),
+    }),
+};

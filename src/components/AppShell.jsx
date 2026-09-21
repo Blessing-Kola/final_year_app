@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import {
   BookOpen,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../context/useAuth";
 import { useTheme } from "../context/useTheme";
+import { activitiesApi } from "../services/api";
 
 const navigationByRole = {
   student: [
@@ -64,26 +65,52 @@ const navigationByRole = {
     },
     { name: "Reports", href: "/app/coordinator/reports", icon: BookOpen },
   ],
+  examiner: [
+    { name: "Dashboard", href: "/app/examiner/dashboard", icon: LayoutGrid },
+    { name: "Projects", href: "/app/examiner/projects", icon: Briefcase },
+    { name: "Evaluations", href: "/app/examiner/evaluations", icon: BookOpen },
+    { name: "Schedule", href: "/app/examiner/schedule", icon: ShieldCheck },
+  ],
 };
 
 export default function AppShell({ role }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [activities, setActivities] = useState([]);
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+
+  useEffect(() => {
+    let active = true;
+
+    activitiesApi
+      .list()
+      .then((response) => {
+        if (active) setActivities(response.activities ?? []);
+      })
+      .catch(() => {
+        if (active) setActivities([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
 
   const navigation = navigationByRole[role] ?? [];
   const profileName =
     user?.name ||
     [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
-    "Demo user";
+    "User";
   const roleLabel =
     role === "coordinator"
       ? "Course coordinator"
       : role === "supervisor"
         ? "Supervisor"
-        : "Student";
+        : role === "examiner"
+          ? "Examiner"
+          : "Student";
   const title =
     navigation.find((item) => location.pathname.startsWith(item.href))?.name ??
     "Overview";
@@ -121,11 +148,6 @@ export default function AppShell({ role }) {
                   <Icon size={16} />
                   {item.name}
                 </span>
-                {item.name === "Reviews" ? (
-                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">
-                    3
-                  </span>
-                ) : null}
               </NavLink>
             );
           })}
@@ -291,25 +313,9 @@ export default function AppShell({ role }) {
               </button>
             </div>
             <div className="mt-4 space-y-3">
-              {[
-                {
-                  title: "Chapter 4 feedback received",
-                  body: "Your methodology chapter is ready for review.",
-                  time: "10m ago",
-                },
-                {
-                  title: "Defense slot confirmed",
-                  body: "A panel has been assigned for your viva.",
-                  time: "1h ago",
-                },
-                {
-                  title: "Proposal approved",
-                  body: "Your topic proposal is now endorsed by the coordinator.",
-                  time: "2h ago",
-                },
-              ].map((entry) => (
+              {activities.map((entry) => (
                 <div
-                  key={entry.title}
+                  key={entry.id}
                   className="rounded-xl border border-slate-200 p-3"
                 >
                   <div className="flex items-center justify-between gap-3">
@@ -318,13 +324,19 @@ export default function AppShell({ role }) {
                         {entry.title}
                       </p>
                       <p className="mt-1 text-sm text-slate-600">
-                        {entry.body}
+                        {entry.body ||
+                          "There is a new update in your workspace."}
                       </p>
                     </div>
-                    <span className="text-xs text-slate-400">{entry.time}</span>
+                    <span className="text-xs text-slate-400">
+                      {new Date(entry.createdAt).toLocaleDateString()}
+                    </span>
                   </div>
                 </div>
               ))}
+              {!activities.length ? (
+                <p className="text-sm text-slate-500">No activities yet.</p>
+              ) : null}
             </div>
             <button className="mt-6 flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
               Mark all as read <ChevronRight size={16} />
