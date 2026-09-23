@@ -1,10 +1,11 @@
+-- Internal project roles only: student, supervisor, coordinator.
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
   "firstName" text,
   "lastName" text,
   email text unique not null,
   password text not null,
-  role text not null default 'student' check (role in ('student', 'supervisor', 'coordinator', 'examiner')),
+  role text not null default 'student' check (role in ('student', 'supervisor', 'coordinator')),
   department text,
   "studentId" text,
   "createdAt" timestamptz not null default now()
@@ -12,7 +13,7 @@ create table if not exists public.users (
 
 alter table public.users drop constraint if exists users_role_check;
 alter table public.users add constraint users_role_check
-  check (role in ('student', 'supervisor', 'coordinator', 'examiner'));
+  check (role in ('student', 'supervisor', 'coordinator'));
 
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
@@ -138,7 +139,6 @@ create table if not exists public.defense_panel_members (
 create table if not exists public.evaluations (
   id uuid primary key default gen_random_uuid(),
   "defenseId" uuid not null references public.defenses(id) on delete cascade,
-  "examinerId" uuid not null references public.users(id) on delete cascade,
   "studentId" uuid not null references public.users(id) on delete cascade,
   status text not null default 'pending',
   score numeric,
@@ -159,5 +159,4 @@ create index if not exists chapters_project_idx on public.chapters ("projectId")
 create index if not exists meetings_participants_idx on public.meetings ("studentId", "supervisorId");
 create index if not exists reviews_supervisor_idx on public.reviews ("supervisorId", status);
 create index if not exists defenses_student_idx on public.defenses ("studentId");
-create index if not exists evaluations_examiner_idx on public.evaluations ("examinerId", status);
 create index if not exists messages_participants_idx on public.messages ("senderId", "recipientId", "createdAt" desc);

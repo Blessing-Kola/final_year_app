@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/useAuth";
 import { AuthPageLayout } from "./components/AuthPageLayout";
 
+const ROLE_OPTIONS = [
+  { value: "student", label: "Student" },
+  { value: "supervisor", label: "Supervisor" },
+  { value: "coordinator", label: "Course coordinator" },
+];
+
 export function RegisterPage() {
   const navigate = useNavigate();
   const { register } = useAuth();
@@ -121,10 +127,11 @@ export function RegisterPage() {
             onChange={handleChange}
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           >
-            <option value="student">Student</option>
-            <option value="supervisor">Supervisor</option>
-            <option value="coordinator">Course coordinator</option>
-            <option value="examiner">Examiner</option>
+            {ROLE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">

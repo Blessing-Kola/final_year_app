@@ -65,12 +65,6 @@ const navigationByRole = {
     },
     { name: "Reports", href: "/app/coordinator/reports", icon: BookOpen },
   ],
-  examiner: [
-    { name: "Dashboard", href: "/app/examiner/dashboard", icon: LayoutGrid },
-    { name: "Projects", href: "/app/examiner/projects", icon: Briefcase },
-    { name: "Evaluations", href: "/app/examiner/evaluations", icon: BookOpen },
-    { name: "Schedule", href: "/app/examiner/schedule", icon: ShieldCheck },
-  ],
 };
 
 export default function AppShell({ role }) {
@@ -108,9 +102,7 @@ export default function AppShell({ role }) {
       ? "Course coordinator"
       : role === "supervisor"
         ? "Supervisor"
-        : role === "examiner"
-          ? "Examiner"
-          : "Student";
+        : "Student";
   const title =
     navigation.find((item) => location.pathname.startsWith(item.href))?.name ??
     "Overview";

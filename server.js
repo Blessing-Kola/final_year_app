@@ -230,16 +230,6 @@ const getPortalData = async (user) => {
         return { role: user.role, students: students.map(normalizeUser), projects, reviews, meetings, topics };
     }
 
-    if (user.role === "examiner") {
-        const panelMemberships = await fetchRows("defense_panel_members", (query) => query.eq("userId", user.id));
-        const defenseIds = panelMemberships.map((membership) => membership.defenseId);
-        const [defenses, evaluations] = await Promise.all([
-            defenseIds.length ? fetchRows("defenses", (query) => query.in("id", defenseIds).order("scheduledAt", { ascending: true })) : [],
-            fetchRows("evaluations", (query) => query.eq("examinerId", user.id).order("submittedAt", { ascending: false })),
-        ]);
-        return { role: user.role, defenses, evaluations, topics };
-    }
-
     const [students, supervisors, pendingRequests, projects, defenses, studentUsers, supervisorUsers, projectRows, defenseRows] = await Promise.all([
         fetchCount("users", (query) => query.eq("role", "student")),
         fetchCount("users", (query) => query.eq("role", "supervisor")),
@@ -267,6 +257,12 @@ app.get("/health", (req, res) => res.json({ status: "ok" }));
 app.post("/api/auth/register", async (req, res) => {
     try {
         const { firstName, lastName, email, password, role, department, studentId } = req.body;
+        const validRoles = new Set(["student", "supervisor", "coordinator"]);
+
+        if (!validRoles.has(role)) {
+            return res.status(400).json({ message: "Invalid user role" });
+        }
+
         const existingUser = await findUserByEmail(email);
         if (existingUser) {
             return res.status(400).json({ message: "Email already registered" });

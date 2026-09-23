@@ -111,27 +111,6 @@ const CoordinatorReportsPage = lazy(() =>
   })),
 );
 
-const ExaminerDashboardPage = lazy(() =>
-  import("./pages/portal/ExaminerPortal").then((module) => ({
-    default: module.ExaminerDashboard,
-  })),
-);
-const ExaminerProjectsPage = lazy(() =>
-  import("./pages/portal/ExaminerPortal").then((module) => ({
-    default: module.ExaminerProjectsPage,
-  })),
-);
-const ExaminerEvaluationsPage = lazy(() =>
-  import("./pages/portal/ExaminerPortal").then((module) => ({
-    default: module.ExaminerEvaluationsPage,
-  })),
-);
-const ExaminerSchedulePage = lazy(() =>
-  import("./pages/portal/ExaminerPortal").then((module) => ({
-    default: module.ExaminerSchedulePage,
-  })),
-);
-
 function LoadingState() {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -346,43 +325,6 @@ function App() {
             element={
               <Suspense fallback={<LoadingState />}>
                 <CoordinatorReportsPage />
-              </Suspense>
-            }
-          />
-        </Route>
-      </Route>
-
-      <Route element={<ProtectedRoute role="examiner" />}>
-        <Route element={<AppShell role="examiner" />}>
-          <Route
-            path="/app/examiner/dashboard"
-            element={
-              <Suspense fallback={<LoadingState />}>
-                <ExaminerDashboardPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/app/examiner/projects"
-            element={
-              <Suspense fallback={<LoadingState />}>
-                <ExaminerProjectsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/app/examiner/evaluations"
-            element={
-              <Suspense fallback={<LoadingState />}>
-                <ExaminerEvaluationsPage />
-              </Suspense>
-            }
-          />
-          <Route
-            path="/app/examiner/schedule"
-            element={
-              <Suspense fallback={<LoadingState />}>
-                <ExaminerSchedulePage />
               </Suspense>
             }
           />
