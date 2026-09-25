@@ -7,12 +7,16 @@ export default function SupervisorDashboard() {
   const students = data?.students ?? [];
   const reviews = data?.reviews ?? [];
   const meetings = data?.meetings ?? [];
+  const pendingReviews = reviews.filter(
+    (review) => review.status === "pending",
+  );
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "Assigned students", value: students.length },
-          { label: "Pending reviews", value: reviews.filter((review) => review.status === "pending").length },
+          { label: "Pending reviews", value: pendingReviews.length },
           { label: "Meetings", value: meetings.length },
           { label: "Assigned projects", value: data?.projects?.length ?? 0 },
         ].map((metric) => (
@@ -42,28 +46,35 @@ export default function SupervisorDashboard() {
             </Link>
           </div>
           <div className="space-y-3">
-            {reviews.filter((review) => review.status === "pending").map((item) => {
-              const student = students.find((entry) => entry.id === item.studentId);
-              return (
-              <div
-                key={item.id}
-                className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
-              >
-                <div>
-                  <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
-                  <p className="text-sm text-slate-500">
-                    {item.type} • awaiting review
-                  </p>
-                </div>
-                <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-                  Review
-                </button>
+            {pendingReviews.length ? (
+              pendingReviews.map((item) => {
+                const student = students.find(
+                  (entry) => entry.id === item.studentId,
+                );
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
+                  >
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        {student?.name || "Student"}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        {item.type} • awaiting review
+                      </p>
+                    </div>
+                    <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
+                      Review
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                No pending reviews right now.
               </div>
-            );
-            })}
-            {!reviews.filter((review) => review.status === "pending").length ? (
-              <p className="text-sm text-slate-500">No pending reviews.</p>
-            ) : null}
+            )}
           </div>
         </div>
 
@@ -72,21 +83,31 @@ export default function SupervisorDashboard() {
             Upcoming meetings
           </h2>
           <div className="mt-4 space-y-3">
-            {meetings.map((meeting) => {
-              const student = students.find((entry) => entry.id === meeting.studentId);
-              return (
-              <div
-                key={meeting.id}
-                className="rounded-xl border border-slate-200 p-3"
-              >
-                <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
-                <p className="mt-1 text-sm text-slate-500">
-                  {new Date(meeting.scheduledAt).toLocaleString()} • {meeting.topic}
-                </p>
+            {meetings.length ? (
+              meetings.map((meeting) => {
+                const student = students.find(
+                  (entry) => entry.id === meeting.studentId,
+                );
+                return (
+                  <div
+                    key={meeting.id}
+                    className="rounded-xl border border-slate-200 p-3"
+                  >
+                    <p className="font-medium text-slate-900">
+                      {student?.name || "Student"}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {new Date(meeting.scheduledAt).toLocaleString()} •{" "}
+                      {meeting.topic}
+                    </p>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+                No meetings scheduled yet.
               </div>
-            );
-            })}
-            {!meetings.length ? <p className="text-sm text-slate-500">No meetings scheduled.</p> : null}
+            )}
           </div>
         </div>
       </div>
@@ -96,8 +117,12 @@ export default function SupervisorDashboard() {
 
 export function SupervisorStudentsPage() {
   const { data } = usePortalData();
-  const students = data?.students ?? [];
-  const projects = data?.projects ?? [];
+  const students = (data?.students ?? []).filter(
+    (student) => student && student.id,
+  );
+  const projects = (data?.projects ?? []).filter(
+    (project) => project && project.studentId != null,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -112,35 +137,45 @@ export function SupervisorStudentsPage() {
         </div>
       </div>
       <div className="space-y-3">
-        {students.map((student) => {
-          const project = projects.find((item) => item.studentId === student.id);
-          return (
-          <div
-            key={student.id}
-            className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between"
-          >
-            <div>
-              <p className="font-semibold text-slate-900">{student.name}</p>
-              <p className="text-sm text-slate-500">
-                {student.studentId || student.email} • {project?.title || "No project"}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
-                {project?.stage || "Not started"}
-              </span>
-              <span className="text-sm text-slate-500">{project?.progress ?? 0}%</span>
-              <Link
-                to={`/app/supervisor/students/${student.id}`}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700"
+        {students.length ? (
+          students.map((student) => {
+            const project = projects.find(
+              (item) => item.studentId === student.id,
+            );
+            return (
+              <div
+                key={student.id}
+                className="flex flex-col gap-3 rounded-xl border border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between"
               >
-                View
-              </Link>
-            </div>
+                <div>
+                  <p className="font-semibold text-slate-900">{student.name}</p>
+                  <p className="text-sm text-slate-500">
+                    {student.studentId || student.email} •{" "}
+                    {project?.title || "No project"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-700">
+                    {project?.stage || "Not started"}
+                  </span>
+                  <span className="text-sm text-slate-500">
+                    {project?.progress ?? 0}%
+                  </span>
+                  <Link
+                    to={`/app/supervisor/students/${student.id}`}
+                    className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700"
+                  >
+                    View
+                  </Link>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No students have been assigned yet.
           </div>
-          );
-        })}
-        {!students.length ? <p className="text-sm text-slate-500">No students have been assigned.</p> : null}
+        )}
       </div>
     </div>
   );
@@ -148,8 +183,12 @@ export function SupervisorStudentsPage() {
 
 export function SupervisorReviewsPage() {
   const { data } = usePortalData();
-  const reviews = data?.reviews ?? [];
-  const students = data?.students ?? [];
+  const reviews = (data?.reviews ?? []).filter(
+    (review) => review && review.studentId != null,
+  );
+  const students = (data?.students ?? []).filter(
+    (student) => student && student.id,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -164,31 +203,41 @@ export function SupervisorReviewsPage() {
         </div>
       </div>
       <div className="space-y-3">
-        {reviews.map((item) => {
-          const student = students.find((entry) => entry.id === item.studentId);
-          return (
-          <div
-            key={item.id}
-            className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
-          >
-            <div>
-              <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
-              <p className="text-sm text-slate-500">
-                {item.type} submitted {new Date(item.submittedAt).toLocaleDateString()}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                {item.status}
-              </span>
-              <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-                Open review
-              </button>
-            </div>
+        {reviews.length ? (
+          reviews.map((item) => {
+            const student = students.find(
+              (entry) => entry.id === item.studentId,
+            );
+            return (
+              <div
+                key={item.id}
+                className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">
+                    {student?.name || "Student"}
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    {item.type} submitted{" "}
+                    {new Date(item.submittedAt).toLocaleDateString()}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                    {item.status}
+                  </span>
+                  <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
+                    Open review
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No reviews assigned yet.
           </div>
-          );
-        })}
-        {!reviews.length ? <p className="text-sm text-slate-500">No reviews assigned.</p> : null}
+        )}
       </div>
     </div>
   );
@@ -196,47 +245,61 @@ export function SupervisorReviewsPage() {
 
 export function SupervisorFeedbackPage() {
   const { data } = usePortalData();
+  const students = (data?.students ?? []).filter(
+    (student) => student && student.id,
+  );
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">
         Feedback composer
       </h2>
       <div className="mt-4 space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Student
-          </label>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-            {(data?.students ?? []).map((student) => (
-              <option key={student.id} value={student.id}>{student.name}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Overall assessment
-          </label>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-            <option>Approved</option>
-            <option>Needs revision</option>
-            <option>Rejected</option>
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Strengths
-          </label>
-          <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Areas for improvement
-          </label>
-          <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-        </div>
-        <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
-          Send feedback
-        </button>
+        {students.length ? (
+          <>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Student
+              </label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Overall assessment
+              </label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
+                <option>Approved</option>
+                <option>Needs revision</option>
+                <option>Rejected</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Strengths
+              </label>
+              <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Areas for improvement
+              </label>
+              <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
+            </div>
+            <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
+              Send feedback
+            </button>
+          </>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No students are assigned yet, so there is no feedback to compose.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -244,6 +307,10 @@ export function SupervisorFeedbackPage() {
 
 export function SupervisorSchedulingPage() {
   const { data } = usePortalData();
+  const meetings = (data?.meetings ?? []).filter(
+    (meeting) => meeting && meeting.studentId != null,
+  );
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Scheduling</h2>
@@ -251,13 +318,23 @@ export function SupervisorSchedulingPage() {
         Calendar view and upcoming meetings for your assigned students.
       </p>
       <div className="mt-5 space-y-3">
-        {(data?.meetings ?? []).map((meeting) => (
-          <div key={meeting.id} className="rounded-xl border border-slate-200 p-4">
-            <p className="font-medium text-slate-900">{meeting.topic}</p>
-            <p className="text-sm text-slate-500">{new Date(meeting.scheduledAt).toLocaleString()}</p>
+        {meetings.length ? (
+          meetings.map((meeting) => (
+            <div
+              key={meeting.id}
+              className="rounded-xl border border-slate-200 p-4"
+            >
+              <p className="font-medium text-slate-900">{meeting.topic}</p>
+              <p className="text-sm text-slate-500">
+                {new Date(meeting.scheduledAt).toLocaleString()}
+              </p>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No meetings are scheduled yet.
           </div>
-        ))}
-        {!data?.meetings?.length ? <p className="text-sm text-slate-500">No meetings scheduled.</p> : null}
+        )}
       </div>
     </div>
   );
@@ -265,54 +342,70 @@ export function SupervisorSchedulingPage() {
 
 export function SupervisorEvaluationPage() {
   const { data } = usePortalData();
+  const students = (data?.students ?? []).filter(
+    (student) => student && student.id,
+  );
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Evaluation</h2>
       <div className="mt-4 space-y-4">
-        <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700">
-            Student
-          </label>
-          <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-            {(data?.students ?? []).map((student) => (
-              <option key={student.id} value={student.id}>{student.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          {[
-            { label: "Research quality", weight: "25%" },
-            { label: "Methodology", weight: "20%" },
-            { label: "Writing", weight: "20%" },
-            { label: "Defense presentation", weight: "20%" },
-            { label: "Originality", weight: "15%" },
-          ].map((criterion) => (
-            <div
-              key={criterion.label}
-              className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3"
-            >
-              <div>
-                <p className="font-medium text-slate-900">{criterion.label}</p>
-                <p className="text-sm text-slate-500">
-                  Weight {criterion.weight}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                {[1, 2, 3, 4, 5].map((score) => (
-                  <button
-                    key={score}
-                    className="rounded-full border border-slate-200 px-2.5 py-1 text-sm text-slate-700"
-                  >
-                    {score}
-                  </button>
+        {students.length ? (
+          <>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                Student
+              </label>
+              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
+                {students.map((student) => (
+                  <option key={student.id} value={student.id}>
+                    {student.name}
+                  </option>
                 ))}
-              </div>
+              </select>
             </div>
-          ))}
-        </div>
-        <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
-          Submit evaluation
-        </button>
+            <div className="space-y-2">
+              {[
+                { label: "Research quality", weight: "25%" },
+                { label: "Methodology", weight: "20%" },
+                { label: "Writing", weight: "20%" },
+                { label: "Defense presentation", weight: "20%" },
+                { label: "Originality", weight: "15%" },
+              ].map((criterion) => (
+                <div
+                  key={criterion.label}
+                  className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3"
+                >
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      {criterion.label}
+                    </p>
+                    <p className="text-sm text-slate-500">
+                      Weight {criterion.weight}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    {[1, 2, 3, 4, 5].map((score) => (
+                      <button
+                        key={score}
+                        className="rounded-full border border-slate-200 px-2.5 py-1 text-sm text-slate-700"
+                      >
+                        {score}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
+              Submit evaluation
+            </button>
+          </>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No assigned students are available for evaluation yet.
+          </div>
+        )}
       </div>
     </div>
   );

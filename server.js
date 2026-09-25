@@ -220,7 +220,11 @@ const getPortalData = async (user) => {
         const assignments = await fetchRows("supervisor_requests", (query) =>
             query.eq("supervisorId", user.id).eq("status", "assigned"),
         );
-        const studentIds = assignments.map((assignment) => assignment.studentId);
+        const studentIds = [...new Set(
+            assignments
+                .map((assignment) => assignment.studentId)
+                .filter((studentId) => studentId !== null && studentId !== undefined && studentId !== ""),
+        )];
         const [projects, reviews, meetings, students] = await Promise.all([
             studentIds.length ? fetchRows("projects", (query) => query.in("studentId", studentIds)) : [],
             fetchRows("reviews", (query) => query.eq("supervisorId", user.id).order("submittedAt", { ascending: false })),

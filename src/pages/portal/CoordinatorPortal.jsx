@@ -78,7 +78,10 @@ export default function CoordinatorDashboard() {
 
 export function CoordinatorUsersPage() {
   const { data } = usePortalData();
-  const users = [...(data?.students ?? []), ...(data?.supervisors ?? [])];
+  const users = [
+    ...(data?.students ?? []),
+    ...(data?.supervisors ?? []),
+  ].filter((user) => user && user.id);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -248,7 +251,9 @@ export function CoordinatorAssignmentsPage() {
 
 export function CoordinatorProposalsPage() {
   const { data } = usePortalData();
-  const projects = data?.projects ?? [];
+  const projects = (data?.projects ?? []).filter(
+    (project) => project && project.studentId != null,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
@@ -284,11 +289,14 @@ export function CoordinatorProposalsPage() {
 
 export function CoordinatorCalendarPage() {
   const { data } = usePortalData();
+  const defenses = (data?.defenses ?? []).filter(
+    (defense) => defense && defense.id,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Calendar</h2>
       <div className="mt-5 space-y-3">
-        {(data?.defenses ?? []).map((defense) => (
+        {defenses.map((defense) => (
           <div
             key={defense.id}
             className="rounded-xl border border-slate-200 p-4"
@@ -303,7 +311,7 @@ export function CoordinatorCalendarPage() {
             </p>
           </div>
         ))}
-        {!data?.defenses?.length ? (
+        {!defenses.length ? (
           <p className="text-sm text-slate-500">No defenses scheduled.</p>
         ) : null}
       </div>
@@ -313,11 +321,14 @@ export function CoordinatorCalendarPage() {
 
 export function CoordinatorExaminationsPage() {
   const { data } = usePortalData();
+  const defenses = (data?.defenses ?? []).filter(
+    (defense) => defense && defense.id,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Examinations</h2>
       <div className="mt-5 space-y-3">
-        {(data?.defenses ?? []).map((defense) => (
+        {defenses.map((defense) => (
           <div
             key={defense.id}
             className="rounded-xl border border-slate-200 p-4"
@@ -328,7 +339,7 @@ export function CoordinatorExaminationsPage() {
             </p>
           </div>
         ))}
-        {!data?.defenses?.length ? (
+        {!defenses.length ? (
           <p className="text-sm text-slate-500">No examination panels yet.</p>
         ) : null}
       </div>
