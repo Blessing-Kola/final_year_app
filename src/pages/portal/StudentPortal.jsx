@@ -25,8 +25,9 @@ export function StudentDashboard() {
   const [activities, setActivities] = useState([]);
   const [supervisorRequest, setSupervisorRequest] = useState(null);
   const { data } = usePortalData();
-  const project = data?.project;
-  const chapters = data?.chapters ?? [];
+  const project =
+    data?.project && typeof data.project === "object" ? data.project : null;
+  const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
   const metrics = [
     { label: "Project stage", value: project?.stage || "Not started" },
     {
@@ -218,6 +219,7 @@ export function StudentProjectPage() {
   const [requestingSupervisor, setRequestingSupervisor] = useState(false);
   const [requestError, setRequestError] = useState("");
   const { data } = usePortalData();
+  const topics = Array.isArray(data?.topics) ? data.topics : [];
 
   useEffect(() => {
     supervisorApi
@@ -301,7 +303,7 @@ export function StudentProjectPage() {
         ) : null}
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {(data?.topics ?? []).map((topic) => (
+        {topics.map((topic) => (
           <div
             key={topic.title}
             className={`rounded-2xl border p-4 ${topic.availability === "available" ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-80"}`}
@@ -322,7 +324,7 @@ export function StudentProjectPage() {
             </button>
           </div>
         ))}
-        {!data?.topics?.length ? (
+        {!topics.length ? (
           <p className="rounded-xl border border-slate-200 p-5 text-sm text-slate-500 md:col-span-2 xl:col-span-3">
             No project topics are available yet.
           </p>
@@ -335,8 +337,10 @@ export function StudentProjectPage() {
 export function StudentDocumentsPage() {
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
+  const [downloadingId, setDownloadingId] = useState("");
   const [message, setMessage] = useState("");
   const { data } = usePortalData();
+  const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
 
   const handleUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -360,6 +364,28 @@ export function StudentDocumentsPage() {
     }
   };
 
+  const handleDownload = async (document) => {
+    setDownloadingId(document.id);
+    setMessage("");
+
+    try {
+      const blob = await documentsApi.download(document.id);
+      const objectUrl = window.URL.createObjectURL(blob);
+      // `document` shadows the global here, so reach the DOM through `window`.
+      const link = window.document.createElement("a");
+      link.href = objectUrl;
+      link.download = document.originalName;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setMessage(err.message || "Download failed");
+    } finally {
+      setDownloadingId("");
+    }
+  };
+
   const previewDocuments = useMemo(() => documents.slice(0, 3), [documents]);
 
   return (
@@ -367,7 +393,7 @@ export function StudentDocumentsPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <h2 className="text-lg font-semibold text-slate-900">Chapters</h2>
         <div className="mt-4 space-y-2">
-          {(data?.chapters ?? []).map((chapter) => (
+          {chapters.map((chapter) => (
             <button
               key={chapter.title}
               className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-3 text-left"
@@ -380,7 +406,7 @@ export function StudentDocumentsPage() {
               </span>
             </button>
           ))}
-          {!data?.chapters?.length ? (
+          {!chapters.length ? (
             <p className="text-sm text-slate-500">
               No chapters have been created for your project.
             </p>
@@ -409,11 +435,16 @@ export function StudentDocumentsPage() {
               Drag and drop your chapter here
             </p>
             <p className="text-sm text-slate-500">
-              PDF or DOCX only • 20MB max
+              PDF, Word, PowerPoint, Excel, CSV, TXT, ZIP or image • 20MB max
             </p>
             <label className="mt-4 inline-flex cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
               {uploading ? "Uploading..." : "Browse files"}
-              <input type="file" className="hidden" onChange={handleUpload} />
+              <input
+                type="file"
+                className="hidden"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg"
+                onChange={handleUpload}
+              />
             </label>
           </div>
           {message ? (
@@ -424,19 +455,29 @@ export function StudentDocumentsPage() {
               {previewDocuments.map((document) => (
                 <div
                   key={document.id}
-                  className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"
                 >
-                  <div>
-                    <p className="font-medium text-slate-900">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium text-slate-900">
                       {document.originalName}
                     </p>
                     <p className="text-sm text-slate-500">
                       {Math.round(document.size / 1024)} KB • Uploaded to server
                     </p>
                   </div>
-                  <button className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white">
-                    Submit for review
-                  </button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(document)}
+                      disabled={downloadingId === document.id}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {downloadingId === document.id ? "Downloading..." : "Download"}
+                    </button>
+                    <button className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white">
+                      Submit for review
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -478,7 +519,7 @@ export function StudentDocumentsPage() {
 
 export function StudentCommunicationPage() {
   const { data } = usePortalData();
-  const messages = data?.messages ?? [];
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
   const supervisorName =
     data?.supervisorRequest?.supervisor?.name || "Supervisor";
 
@@ -653,6 +694,8 @@ export function StudentAccountPage() {
     .map((value) => value[0])
     .join("")
     .slice(0, 2);
+  const idLabel = user?.role === "student" ? "Student ID" : "Staff ID";
+  const idValue = user?.role === "student" ? user?.studentId : user?.staffId;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -678,7 +721,8 @@ export function StudentAccountPage() {
                 {user?.name || "User"}
               </p>
               <p className="text-sm text-slate-500">
-                {user?.role || "student"} • {user?.studentId || "No student ID"}
+                {user?.role || "student"} •{" "}
+                {idValue || `No ${idLabel.toLowerCase()}`}
               </p>
             </div>
           </div>

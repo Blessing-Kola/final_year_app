@@ -13,102 +13,98 @@ import {
 } from "./pages/public";
 import { useAuth } from "./context/useAuth";
 
-const StudentDashboardPage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentDashboard,
-  })),
+// A bare `module.X` silently resolves to `undefined` when the export is renamed
+// or removed, and React then throws the opaque "Element type is invalid" error.
+// Failing here instead names the export that is missing.
+const lazyNamed = (loader, exportName) =>
+  lazy(() =>
+    loader().then((module) => {
+      if (typeof module[exportName] !== "function") {
+        throw new Error(
+          `Lazy route "${exportName}" is not exported by the portal module.`,
+        );
+      }
+      return { default: module[exportName] };
+    }),
+  );
+
+const StudentDashboardPage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentDashboard",
 );
-const StudentProjectPage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentProjectPage,
-  })),
+const StudentProjectPage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentProjectPage",
 );
-const StudentDocumentsPage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentDocumentsPage,
-  })),
+const StudentDocumentsPage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentDocumentsPage",
 );
-const StudentCommunicationPage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentCommunicationPage,
-  })),
+const StudentCommunicationPage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentCommunicationPage",
 );
-const StudentDefensePage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentDefensePage,
-  })),
+const StudentDefensePage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentDefensePage",
 );
-const StudentAccountPage = lazy(() =>
-  import("./pages/portal/StudentPortal").then((module) => ({
-    default: module.StudentAccountPage,
-  })),
+const StudentAccountPage = lazyNamed(
+  () => import("./pages/portal/StudentPortal"),
+  "StudentAccountPage",
 );
 
-const SupervisorDashboardPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorDashboard,
-  })),
+const SupervisorDashboardPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorDashboard",
 );
-const SupervisorStudentsPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorStudentsPage,
-  })),
+const SupervisorStudentsPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorStudentsPage",
 );
-const SupervisorReviewsPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorReviewsPage,
-  })),
+const SupervisorReviewsPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorReviewsPage",
 );
-const SupervisorFeedbackPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorFeedbackPage,
-  })),
+const SupervisorFeedbackPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorFeedbackPage",
 );
-const SupervisorSchedulingPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorSchedulingPage,
-  })),
+const SupervisorSchedulingPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorSchedulingPage",
 );
-const SupervisorEvaluationPage = lazy(() =>
-  import("./pages/portal/SupervisorPortal").then((module) => ({
-    default: module.SupervisorEvaluationPage,
-  })),
+const SupervisorEvaluationPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorEvaluationPage",
 );
 
-const CoordinatorDashboardPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorDashboard,
-  })),
+const CoordinatorDashboardPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorDashboard",
 );
-const CoordinatorUsersPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorUsersPage,
-  })),
+const CoordinatorUsersPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorUsersPage",
 );
-const CoordinatorAssignmentsPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorAssignmentsPage,
-  })),
+const CoordinatorAssignmentsPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorAssignmentsPage",
 );
-const CoordinatorProposalsPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorProposalsPage,
-  })),
+const CoordinatorProposalsPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorProposalsPage",
 );
-const CoordinatorCalendarPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorCalendarPage,
-  })),
+const CoordinatorCalendarPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorCalendarPage",
 );
-const CoordinatorExaminationsPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorExaminationsPage,
-  })),
+const CoordinatorExaminationsPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorExaminationsPage",
 );
-const CoordinatorReportsPage = lazy(() =>
-  import("./pages/portal/CoordinatorPortal").then((module) => ({
-    default: module.CoordinatorReportsPage,
-  })),
+const CoordinatorReportsPage = lazyNamed(
+  () => import("./pages/portal/CoordinatorPortal"),
+  "CoordinatorReportsPage",
 );
 
 function LoadingState() {

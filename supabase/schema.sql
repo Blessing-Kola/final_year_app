@@ -8,8 +8,25 @@ create table if not exists public.users (
   role text not null default 'student' check (role in ('student', 'supervisor', 'coordinator')),
   department text,
   "studentId" text,
+  "staffId" text,
   "createdAt" timestamptz not null default now()
 );
+
+-- Staff identifiers used to be written into "studentId". Add the column and
+-- move any existing supervisor/coordinator rows across.
+alter table public.users add column if not exists "staffId" text;
+
+update public.users
+set "staffId" = "studentId",
+    "studentId" = null
+where role in ('supervisor', 'coordinator')
+  and "studentId" is not null
+  and "staffId" is null;
+
+-- Emails are stored and matched lower-cased.
+update public.users
+set email = lower(email)
+where email <> lower(email);
 
 alter table public.users drop constraint if exists users_role_check;
 alter table public.users add constraint users_role_check
@@ -72,7 +89,7 @@ create table if not exists public.project_topics (
   availability text not null default 'available'
     check (availability in ('available', 'unavailable')),
   "createdAt" timestamptz not null default now()
-);9
+);
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),

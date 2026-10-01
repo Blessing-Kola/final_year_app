@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supervisorApi } from "../../services/api";
 import { usePortalData } from "../../hooks/usePortalData";
 
-export default function CoordinatorDashboard() {
+export function CoordinatorDashboard() {
   const { data } = usePortalData();
   const stats = data?.stats ?? {};
   return (
@@ -79,8 +79,8 @@ export default function CoordinatorDashboard() {
 export function CoordinatorUsersPage() {
   const { data } = usePortalData();
   const users = [
-    ...(data?.students ?? []),
-    ...(data?.supervisors ?? []),
+    ...(Array.isArray(data?.students) ? data.students : []),
+    ...(Array.isArray(data?.supervisors) ? data.supervisors : []),
   ].filter((user) => user && user.id);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -107,7 +107,7 @@ export function CoordinatorUsersPage() {
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.name} className="border-t border-slate-200">
+              <tr key={user.id} className="border-t border-slate-200">
                 <td className="px-4 py-3 font-medium text-slate-900">
                   {user.name}
                 </td>
@@ -139,7 +139,7 @@ export function CoordinatorAssignmentsPage() {
 
   const loadAssignments = () => {
     setLoading(true);
-    Promise.all([supervisorApi.listRequests(), supervisorApi.listSupervisors()])
+    Promise.all([supervisorApi.getRequest(), supervisorApi.listSupervisors()])
       .then(([requestResponse, supervisorResponse]) => {
         setRequests(requestResponse.requests ?? []);
         setSupervisors(supervisorResponse.users ?? []);
@@ -151,7 +151,7 @@ export function CoordinatorAssignmentsPage() {
   };
 
   useEffect(() => {
-    Promise.all([supervisorApi.listRequests(), supervisorApi.listSupervisors()])
+    Promise.all([supervisorApi.getRequest(), supervisorApi.listSupervisors()])
       .then(([requestResponse, supervisorResponse]) => {
         setRequests(requestResponse.requests ?? []);
         setSupervisors(supervisorResponse.users ?? []);
@@ -251,7 +251,7 @@ export function CoordinatorAssignmentsPage() {
 
 export function CoordinatorProposalsPage() {
   const { data } = usePortalData();
-  const projects = (data?.projects ?? []).filter(
+  const projects = (Array.isArray(data?.projects) ? data.projects : []).filter(
     (project) => project && project.studentId != null,
   );
   return (
@@ -259,9 +259,9 @@ export function CoordinatorProposalsPage() {
       <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
       <div className="mt-4 space-y-3">
         {projects.map((proposal) => {
-          const student = (data?.students ?? []).find(
-            (entry) => entry.id === proposal.studentId,
-          );
+          const student = (
+            Array.isArray(data?.students) ? data.students : []
+          ).find((entry) => entry.id === proposal.studentId);
           return (
             <div
               key={proposal.id}
@@ -289,7 +289,7 @@ export function CoordinatorProposalsPage() {
 
 export function CoordinatorCalendarPage() {
   const { data } = usePortalData();
-  const defenses = (data?.defenses ?? []).filter(
+  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
     (defense) => defense && defense.id,
   );
   return (
@@ -321,7 +321,7 @@ export function CoordinatorCalendarPage() {
 
 export function CoordinatorExaminationsPage() {
   const { data } = usePortalData();
-  const defenses = (data?.defenses ?? []).filter(
+  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
     (defense) => defense && defense.id,
   );
   return (

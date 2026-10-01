@@ -1,14 +1,13 @@
 import { Link } from "react-router-dom";
-import {} from "lucide-react";
 import { usePortalData } from "../../hooks/usePortalData";
 
-export default function SupervisorDashboard() {
+export function SupervisorDashboard() {
   const { data } = usePortalData();
-  const students = data?.students ?? [];
-  const reviews = data?.reviews ?? [];
-  const meetings = data?.meetings ?? [];
+  const students = Array.isArray(data?.students) ? data.students : [];
+  const reviews = Array.isArray(data?.reviews) ? data.reviews : [];
+  const meetings = Array.isArray(data?.meetings) ? data.meetings : [];
   const pendingReviews = reviews.filter(
-    (review) => review.status === "pending",
+    (review) => review && review.status === "pending",
   );
 
   return (

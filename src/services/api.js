@@ -58,6 +58,22 @@ export const documentsApi = {
 
     return handleResponse(response);
   },
+  download: async (documentId) => {
+    const response = await fetch(
+      `${API_BASE_URL}/documents/${documentId}/download`,
+      {
+        credentials: "include",
+        headers: getAuthHeaders(),
+      },
+    );
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.message || "Download failed");
+    }
+
+    return response.blob();
+  },
 };
 
 export const activitiesApi = {
@@ -75,7 +91,6 @@ export const supervisorApi = {
       method: "POST",
       body: JSON.stringify({ message }),
     }),
-  listRequests: () => request("/supervisor-requests"),
   listSupervisors: () => request("/users?role=supervisor"),
   assign: (requestId, supervisorId) =>
     request(`/supervisor-requests/${requestId}/assign`, {
