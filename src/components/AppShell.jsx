@@ -7,6 +7,7 @@ import {
   LayoutGrid,
   Menu,
   MessageSquare,
+  MessagesSquare,
   Bell,
   ShieldCheck,
   UserCircle2,
@@ -35,6 +36,11 @@ const navigationByRole = {
   supervisor: [
     { name: "Dashboard", href: "/app/supervisor/dashboard", icon: LayoutGrid },
     { name: "Students", href: "/app/supervisor/students", icon: Briefcase },
+    {
+      name: "Communication",
+      href: "/app/supervisor/communication",
+      icon: MessagesSquare,
+    },
     { name: "Reviews", href: "/app/supervisor/reviews", icon: BookOpen },
     { name: "Feedback", href: "/app/supervisor/feedback", icon: MessageSquare },
     {

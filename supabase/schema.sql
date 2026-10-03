@@ -1,3 +1,5 @@
+create extension if not exists pgcrypto;
+
 -- Internal project roles only: student, supervisor, coordinator.
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
@@ -72,7 +74,39 @@ create table if not exists public.project_topics (
   availability text not null default 'available'
     check (availability in ('available', 'unavailable')),
   "createdAt" timestamptz not null default now()
-);9
+);
+
+-- A student's own submitted project topic, reviewed by their supervisor/coordinator.
+create table if not exists public.student_topics (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null unique references public.users(id) on delete cascade,
+  title text not null,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined')),
+  "declineReason" text,
+  "submittedAt" timestamptz not null default now(),
+  "reviewedAt" timestamptz,
+  "reviewedBy" uuid references public.users(id) on delete set null
+);
+
+create index if not exists student_topics_status_idx
+  on public.student_topics (status, "submittedAt" desc);
+
+-- A student's proposal. Can only be submitted once their topic is accepted.
+create table if not exists public.proposals (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null unique references public.users(id) on delete cascade,
+  title text not null,
+  description text,
+  "documentId" uuid references public.documents(id) on delete set null,
+  status text not null default 'draft'
+    check (status in ('draft', 'submitted', 'under_review', 'approved', 'rejected')),
+  "submittedAt" timestamptz,
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists proposals_status_idx
+  on public.proposals (status, "submittedAt" desc);
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
@@ -88,14 +122,50 @@ create table if not exists public.projects (
 
 create unique index if not exists projects_student_idx on public.projects ("studentId");
 
-create table if not exists public.chapters (
+-- Set when the student submits the final project, once every chapter is approved.
+alter table public.projects add column if not exists "finalSubmittedAt" timestamptz;
+
+-- Chapters run strictly in sequence: chapter N only opens once N-1 is approved.
+-- The lock itself is never stored — it is derived from the previous chapter's
+-- status on every read, so it cannot drift out of sync.
+drop table if exists public.chapters cascade;
+
+create table public.chapters (
   id uuid primary key default gen_random_uuid(),
   "projectId" uuid not null references public.projects(id) on delete cascade,
+  "studentId" uuid not null references public.users(id) on delete cascade,
+  "chapterNumber" integer not null check ("chapterNumber" between 1 and 5),
   title text not null,
-  status text not null default 'pending',
+  status text not null default 'not_started'
+    check (status in ('not_started', 'in_progress', 'draft', 'submitted', 'under_review', 'approved', 'needs_revision')),
+  "documentId" uuid references public.documents(id) on delete set null,
   "submittedAt" timestamptz,
+  "reviewedAt" timestamptz,
+  "reviewedBy" uuid references public.users(id) on delete set null,
+  "updatedAt" timestamptz not null default now(),
+  unique ("projectId", "chapterNumber")
+);
+
+create index if not exists chapters_project_idx
+  on public.chapters ("projectId", "chapterNumber");
+
+create index if not exists chapters_student_idx
+  on public.chapters ("studentId", "chapterNumber");
+
+-- Review comments left by a supervisor against one chapter. A table rather than a
+-- column so a chapter keeps the whole review trail across revisions.
+create table if not exists public.chapter_comments (
+  id uuid primary key default gen_random_uuid(),
+  "chapterId" uuid not null references public.chapters(id) on delete cascade,
+  "supervisorId" uuid not null references public.users(id) on delete cascade,
+  "studentId" uuid not null references public.users(id) on delete cascade,
+  comment text not null,
+  "createdAt" timestamptz not null default now(),
   "updatedAt" timestamptz not null default now()
 );
+
+create index if not exists chapter_comments_chapter_idx
+  on public.chapter_comments ("chapterId", "createdAt");
 
 create table if not exists public.meetings (
   id uuid primary key default gen_random_uuid(),
@@ -106,6 +176,33 @@ create table if not exists public.meetings (
   status text not null default 'scheduled'
     check (status in ('scheduled', 'completed', 'cancelled'))
 );
+
+-- A student's request for a meeting with their assigned supervisor.
+-- Separate from public.meetings, which holds meetings already on the calendar.
+create table if not exists public.meeting_requests (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null references public.users(id) on delete cascade,
+  "supervisorId" uuid not null references public.users(id) on delete cascade,
+  title text not null,
+  "date" date not null,
+  "time" text not null,
+  mode text not null default 'in-person'
+    check (mode in ('in-person', 'online')),
+  location text,
+  message text,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined', 'cancelled', 'completed')),
+  "responseMessage" text,
+  "respondedAt" timestamptz,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists meeting_requests_student_idx
+  on public.meeting_requests ("studentId", "createdAt" desc);
+
+create index if not exists meeting_requests_supervisor_idx
+  on public.meeting_requests ("supervisorId", status, "createdAt" desc);
 
 create table if not exists public.reviews (
   id uuid primary key default gen_random_uuid(),
@@ -118,6 +215,12 @@ create table if not exists public.reviews (
   "submittedAt" timestamptz not null default now(),
   "reviewedAt" timestamptz
 );
+
+-- chapters is dropped and recreated above, which takes this foreign key with it.
+-- Restore it so reviews keeps pointing at the recreated table.
+alter table public.reviews drop constraint if exists reviews_chapterid_fkey;
+alter table public.reviews add constraint reviews_chapterid_fkey
+  foreign key ("chapterId") references public.chapters(id) on delete set null;
 
 create table if not exists public.defenses (
   id uuid primary key default gen_random_uuid(),
@@ -155,7 +258,6 @@ create table if not exists public.messages (
   "readAt" timestamptz
 );
 
-create index if not exists chapters_project_idx on public.chapters ("projectId");
 create index if not exists meetings_participants_idx on public.meetings ("studentId", "supervisorId");
 create index if not exists reviews_supervisor_idx on public.reviews ("supervisorId", status);
 create index if not exists defenses_student_idx on public.defenses ("studentId");

@@ -54,6 +54,11 @@ const SupervisorStudentsPage = lazy(() =>
     default: module.SupervisorStudentsPage,
   })),
 );
+const SupervisorStudentDetailPage = lazy(() =>
+  import("./pages/portal/SupervisorPortal").then((module) => ({
+    default: module.SupervisorStudentDetailPage,
+  })),
+);
 const SupervisorReviewsPage = lazy(() =>
   import("./pages/portal/SupervisorPortal").then((module) => ({
     default: module.SupervisorReviewsPage,
@@ -72,6 +77,11 @@ const SupervisorSchedulingPage = lazy(() =>
 const SupervisorEvaluationPage = lazy(() =>
   import("./pages/portal/SupervisorPortal").then((module) => ({
     default: module.SupervisorEvaluationPage,
+  })),
+);
+const SupervisorCommunicationPage = lazy(() =>
+  import("./pages/portal/SupervisorPortal").then((module) => ({
+    default: module.SupervisorCommunicationPage,
   })),
 );
 
@@ -236,6 +246,14 @@ function App() {
             }
           />
           <Route
+            path="/app/supervisor/students/:studentId"
+            element={
+              <Suspense fallback={<LoadingState />}>
+                <SupervisorStudentDetailPage />
+              </Suspense>
+            }
+          />
+          <Route
             path="/app/supervisor/reviews"
             element={
               <Suspense fallback={<LoadingState />}>
@@ -264,6 +282,14 @@ function App() {
             element={
               <Suspense fallback={<LoadingState />}>
                 <SupervisorEvaluationPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/app/supervisor/communication"
+            element={
+              <Suspense fallback={<LoadingState />}>
+                <SupervisorCommunicationPage />
               </Suspense>
             }
           />

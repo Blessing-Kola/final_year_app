@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { supervisorApi } from "../../services/api";
+import TopicReviewPanel from "../../components/TopicReviewPanel";
+import { StatusBadge } from "../../components/StatusBadge";
 import { usePortalData } from "../../hooks/usePortalData";
 
-export default function CoordinatorDashboard() {
+export function CoordinatorDashboard() {
   const { data } = usePortalData();
   const stats = data?.stats ?? {};
   return (
@@ -247,36 +249,44 @@ export function CoordinatorAssignmentsPage() {
 }
 
 export function CoordinatorProposalsPage() {
-  const { data } = usePortalData();
-  const projects = data?.projects ?? [];
+  const { data, loading } = usePortalData();
+  const proposals = data?.proposals ?? [];
+  const students = data?.students ?? [];
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
-      <div className="mt-4 space-y-3">
-        {projects.map((proposal) => {
-          const student = (data?.students ?? []).find(
-            (entry) => entry.id === proposal.studentId,
-          );
-          return (
-            <div
-              key={proposal.id}
-              className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
-            >
-              <div>
-                <p className="font-medium text-slate-900">
-                  {student?.name || "Student"}
-                </p>
-                <p className="text-sm text-slate-500">{proposal.title}</p>
+    <div className="space-y-6">
+      <TopicReviewPanel
+        topics={data?.studentTopics}
+        loading={loading}
+        emptyMessage="No student topics have been submitted yet."
+      />
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Proposals submitted by students whose topics have been accepted.
+        </p>
+        <div className="mt-4 space-y-3">
+          {proposals.map((proposal) => {
+            const student =
+              proposal.student || students.find((entry) => entry.id === proposal.studentId);
+            return (
+              <div
+                key={proposal.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
+                  <p className="text-sm text-slate-500">{proposal.title}</p>
+                </div>
+                <StatusBadge status={proposal.status} fallback="Draft" />
               </div>
-              <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                {proposal.status}
-              </span>
-            </div>
-          );
-        })}
-        {!projects.length ? (
-          <p className="text-sm text-slate-500">No projects submitted.</p>
-        ) : null}
+            );
+          })}
+          {!loading && !proposals.length ? (
+            <p className="text-sm text-slate-500">No proposals submitted.</p>
+          ) : null}
+        </div>
       </div>
     </div>
   );
