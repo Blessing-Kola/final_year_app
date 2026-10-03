@@ -80,7 +80,10 @@ export function CoordinatorDashboard() {
 
 export function CoordinatorUsersPage() {
   const { data } = usePortalData();
-  const users = [...(data?.students ?? []), ...(data?.supervisors ?? [])];
+  const users = [
+    ...(Array.isArray(data?.students) ? data.students : []),
+    ...(Array.isArray(data?.supervisors) ? data.supervisors : []),
+  ].filter((user) => user && user.id);
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex items-center justify-between">
@@ -106,7 +109,7 @@ export function CoordinatorUsersPage() {
           </thead>
           <tbody>
             {users.map((user) => (
-              <tr key={user.name} className="border-t border-slate-200">
+              <tr key={user.id} className="border-t border-slate-200">
                 <td className="px-4 py-3 font-medium text-slate-900">
                   {user.name}
                 </td>
@@ -138,7 +141,7 @@ export function CoordinatorAssignmentsPage() {
 
   const loadAssignments = () => {
     setLoading(true);
-    Promise.all([supervisorApi.listRequests(), supervisorApi.listSupervisors()])
+    Promise.all([supervisorApi.getRequest(), supervisorApi.listSupervisors()])
       .then(([requestResponse, supervisorResponse]) => {
         setRequests(requestResponse.requests ?? []);
         setSupervisors(supervisorResponse.users ?? []);
@@ -150,7 +153,7 @@ export function CoordinatorAssignmentsPage() {
   };
 
   useEffect(() => {
-    Promise.all([supervisorApi.listRequests(), supervisorApi.listSupervisors()])
+    Promise.all([supervisorApi.getRequest(), supervisorApi.listSupervisors()])
       .then(([requestResponse, supervisorResponse]) => {
         setRequests(requestResponse.requests ?? []);
         setSupervisors(supervisorResponse.users ?? []);
@@ -249,37 +252,28 @@ export function CoordinatorAssignmentsPage() {
 }
 
 export function CoordinatorProposalsPage() {
-  const { data, loading } = usePortalData();
-  const proposals = data?.proposals ?? [];
-  const students = data?.students ?? [];
-
+  const { data } = usePortalData();
+  const projects = (Array.isArray(data?.projects) ? data.projects : []).filter(
+    (project) => project && project.studentId != null,
+  );
   return (
-    <div className="space-y-6">
-      <TopicReviewPanel
-        topics={data?.studentTopics}
-        loading={loading}
-        emptyMessage="No student topics have been submitted yet."
-      />
-
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
-        <p className="mt-2 text-sm text-slate-500">
-          Proposals submitted by students whose topics have been accepted.
-        </p>
-        <div className="mt-4 space-y-3">
-          {proposals.map((proposal) => {
-            const student =
-              proposal.student || students.find((entry) => entry.id === proposal.studentId);
-            return (
-              <div
-                key={proposal.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"
-              >
-                <div>
-                  <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
-                  <p className="text-sm text-slate-500">{proposal.title}</p>
-                </div>
-                <StatusBadge status={proposal.status} fallback="Draft" />
+    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+      <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
+      <div className="mt-4 space-y-3">
+        {projects.map((proposal) => {
+          const student = (
+            Array.isArray(data?.students) ? data.students : []
+          ).find((entry) => entry.id === proposal.studentId);
+          return (
+            <div
+              key={proposal.id}
+              className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
+            >
+              <div>
+                <p className="font-medium text-slate-900">
+                  {student?.name || "Student"}
+                </p>
+                <p className="text-sm text-slate-500">{proposal.title}</p>
               </div>
             );
           })}
@@ -294,11 +288,14 @@ export function CoordinatorProposalsPage() {
 
 export function CoordinatorCalendarPage() {
   const { data } = usePortalData();
+  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
+    (defense) => defense && defense.id,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Calendar</h2>
       <div className="mt-5 space-y-3">
-        {(data?.defenses ?? []).map((defense) => (
+        {defenses.map((defense) => (
           <div
             key={defense.id}
             className="rounded-xl border border-slate-200 p-4"
@@ -313,7 +310,7 @@ export function CoordinatorCalendarPage() {
             </p>
           </div>
         ))}
-        {!data?.defenses?.length ? (
+        {!defenses.length ? (
           <p className="text-sm text-slate-500">No defenses scheduled.</p>
         ) : null}
       </div>
@@ -323,11 +320,14 @@ export function CoordinatorCalendarPage() {
 
 export function CoordinatorExaminationsPage() {
   const { data } = usePortalData();
+  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
+    (defense) => defense && defense.id,
+  );
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-slate-900">Examinations</h2>
       <div className="mt-5 space-y-3">
-        {(data?.defenses ?? []).map((defense) => (
+        {defenses.map((defense) => (
           <div
             key={defense.id}
             className="rounded-xl border border-slate-200 p-4"
@@ -338,7 +338,7 @@ export function CoordinatorExaminationsPage() {
             </p>
           </div>
         ))}
-        {!data?.defenses?.length ? (
+        {!defenses.length ? (
           <p className="text-sm text-slate-500">No examination panels yet.</p>
         ) : null}
       </div>

@@ -10,8 +10,25 @@ create table if not exists public.users (
   role text not null default 'student' check (role in ('student', 'supervisor', 'coordinator')),
   department text,
   "studentId" text,
+  "staffId" text,
   "createdAt" timestamptz not null default now()
 );
+
+-- Staff identifiers used to be written into "studentId". Add the column and
+-- move any existing supervisor/coordinator rows across.
+alter table public.users add column if not exists "staffId" text;
+
+update public.users
+set "staffId" = "studentId",
+    "studentId" = null
+where role in ('supervisor', 'coordinator')
+  and "studentId" is not null
+  and "staffId" is null;
+
+-- Emails are stored and matched lower-cased.
+update public.users
+set email = lower(email)
+where email <> lower(email);
 
 alter table public.users drop constraint if exists users_role_check;
 alter table public.users add constraint users_role_check
@@ -75,38 +92,6 @@ create table if not exists public.project_topics (
     check (availability in ('available', 'unavailable')),
   "createdAt" timestamptz not null default now()
 );
-
--- A student's own submitted project topic, reviewed by their supervisor/coordinator.
-create table if not exists public.student_topics (
-  id uuid primary key default gen_random_uuid(),
-  "studentId" uuid not null unique references public.users(id) on delete cascade,
-  title text not null,
-  status text not null default 'pending'
-    check (status in ('pending', 'accepted', 'declined')),
-  "declineReason" text,
-  "submittedAt" timestamptz not null default now(),
-  "reviewedAt" timestamptz,
-  "reviewedBy" uuid references public.users(id) on delete set null
-);
-
-create index if not exists student_topics_status_idx
-  on public.student_topics (status, "submittedAt" desc);
-
--- A student's proposal. Can only be submitted once their topic is accepted.
-create table if not exists public.proposals (
-  id uuid primary key default gen_random_uuid(),
-  "studentId" uuid not null unique references public.users(id) on delete cascade,
-  title text not null,
-  description text,
-  "documentId" uuid references public.documents(id) on delete set null,
-  status text not null default 'draft'
-    check (status in ('draft', 'submitted', 'under_review', 'approved', 'rejected')),
-  "submittedAt" timestamptz,
-  "updatedAt" timestamptz not null default now()
-);
-
-create index if not exists proposals_status_idx
-  on public.proposals (status, "submittedAt" desc);
 
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),

@@ -9,6 +9,8 @@ const ROLE_OPTIONS = [
   { value: "coordinator", label: "Course coordinator" },
 ];
 
+const MIN_PASSWORD_LENGTH = 8;
+
 export function RegisterPage() {
   const navigate = useNavigate();
   const { register } = useAuth();
@@ -19,6 +21,7 @@ export function RegisterPage() {
     role: "student",
     department: "Computer Science",
     studentId: "",
+    staffId: "",
     password: "",
     confirmPassword: "",
   });
@@ -33,8 +36,33 @@ export function RegisterPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.email.endsWith(".edu.ng")) {
+
+    const isStudent = form.role === "student";
+    const identifier = (isStudent ? form.studentId : form.staffId).trim();
+    const identifierLabel = isStudent ? "Student ID" : "Staff ID";
+
+    if (!form.firstName.trim() || !form.lastName.trim()) {
+      setError("Please enter your first and last name.");
+      setSuccess("");
+      return;
+    }
+    if (!form.email.trim().toLowerCase().endsWith(".edu.ng")) {
       setError("Please use your institutional email ending in .edu.ng");
+      setSuccess("");
+      return;
+    }
+    if (!form.department.trim()) {
+      setError("Please enter your department.");
+      setSuccess("");
+      return;
+    }
+    if (!identifier) {
+      setError(`${identifierLabel} is required.`);
+      setSuccess("");
+      return;
+    }
+    if (form.password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       setSuccess("");
       return;
     }
@@ -49,13 +77,14 @@ export function RegisterPage() {
 
     try {
       await register({
-        firstName: form.firstName,
-        lastName: form.lastName,
-        email: form.email,
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        email: form.email.trim().toLowerCase(),
         password: form.password,
         role: form.role,
-        department: form.department,
-        studentId: form.role === "student" ? form.studentId : undefined,
+        department: form.department.trim(),
+        studentId: isStudent ? identifier : undefined,
+        staffId: isStudent ? undefined : identifier,
       });
       setSuccess("Account created. Please sign in to continue.");
       window.setTimeout(() => navigate("/login"), 550);
@@ -96,6 +125,8 @@ export function RegisterPage() {
             name="firstName"
             value={form.firstName}
             onChange={handleChange}
+            required
+            autoComplete="given-name"
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
         </label>
@@ -105,6 +136,8 @@ export function RegisterPage() {
             name="lastName"
             value={form.lastName}
             onChange={handleChange}
+            required
+            autoComplete="family-name"
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
         </label>
@@ -115,9 +148,14 @@ export function RegisterPage() {
             type="email"
             value={form.email}
             onChange={handleChange}
+            required
+            autoComplete="email"
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             placeholder="name@university.edu.ng"
           />
+          <span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">
+            Must end in .edu.ng
+          </span>
         </label>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
           Role
@@ -125,6 +163,7 @@ export function RegisterPage() {
             name="role"
             value={form.role}
             onChange={handleChange}
+            required
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           >
             {ROLE_OPTIONS.map((option) => (
@@ -140,6 +179,7 @@ export function RegisterPage() {
             name="department"
             value={form.department}
             onChange={handleChange}
+            required
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
         </label>
@@ -150,10 +190,22 @@ export function RegisterPage() {
               name="studentId"
               value={form.studentId}
               onChange={handleChange}
+              required
               className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             />
           </label>
-        ) : null}
+        ) : (
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-200 md:col-span-2">
+            Staff ID
+            <input
+              name="staffId"
+              value={form.staffId}
+              onChange={handleChange}
+              required
+              className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+          </label>
+        )}
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
           Password
           <input
@@ -161,8 +213,14 @@ export function RegisterPage() {
             type="password"
             value={form.password}
             onChange={handleChange}
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            autoComplete="new-password"
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
+          <span className="mt-1 block text-xs font-normal text-slate-500 dark:text-slate-400">
+            At least {MIN_PASSWORD_LENGTH} characters
+          </span>
         </label>
         <label className="block text-sm font-medium text-slate-700 dark:text-slate-200">
           Confirm password
@@ -171,6 +229,9 @@ export function RegisterPage() {
             type="password"
             value={form.confirmPassword}
             onChange={handleChange}
+            required
+            minLength={MIN_PASSWORD_LENGTH}
+            autoComplete="new-password"
             className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
           />
         </label>
