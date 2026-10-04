@@ -61,9 +61,10 @@ const SupervisorStudentsPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
   "SupervisorStudentsPage",
 );
-const SupervisorReviewsPage = lazyNamed(
-  () => import("./pages/portal/SupervisorPortal"),
-  "SupervisorReviewsPage",
+const SupervisorReviewsPage = lazy(() =>
+  import("./pages/portal/SupervisorPortal").then((module) => ({
+    default: module.SupervisorReviewsPage,
+  })),
 );
 const SupervisorFeedbackPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
@@ -76,6 +77,11 @@ const SupervisorSchedulingPage = lazyNamed(
 const SupervisorEvaluationPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
   "SupervisorEvaluationPage",
+);
+const SupervisorCommunicationPage = lazy(() =>
+  import("./pages/portal/SupervisorPortal").then((module) => ({
+    default: module.SupervisorCommunicationPage,
+  })),
 );
 
 const CoordinatorDashboardPage = lazyNamed(
@@ -232,6 +238,14 @@ function App() {
             }
           />
           <Route
+            path="/app/supervisor/students/:studentId"
+            element={
+              <Suspense fallback={<LoadingState />}>
+                <SupervisorStudentDetailPage />
+              </Suspense>
+            }
+          />
+          <Route
             path="/app/supervisor/reviews"
             element={
               <Suspense fallback={<LoadingState />}>
@@ -260,6 +274,14 @@ function App() {
             element={
               <Suspense fallback={<LoadingState />}>
                 <SupervisorEvaluationPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/app/supervisor/communication"
+            element={
+              <Suspense fallback={<LoadingState />}>
+                <SupervisorCommunicationPage />
               </Suspense>
             }
           />

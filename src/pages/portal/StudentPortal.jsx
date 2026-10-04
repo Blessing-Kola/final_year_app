@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   CheckCircle2,
@@ -7,8 +7,19 @@ import {
   ArrowRight,
   UploadCloud,
   BellRing,
+  Lock,
+  FileText,
 } from "lucide-react";
-import { activitiesApi, documentsApi, supervisorApi } from "../../services/api";
+import {
+  activitiesApi,
+  documentsApi,
+  proposalApi,
+  supervisorApi,
+  topicApi,
+} from "../../services/api";
+import { Feedback, StatusBadge } from "../../components/StatusBadge";
+import { StudentMeetingRequests } from "../../components/MeetingRequests";
+import StudentChapters from "../../components/StudentChapters";
 import { usePortalData } from "../../hooks/usePortalData";
 import { useAuth } from "../../context/useAuth";
 
@@ -21,6 +32,35 @@ const timeline = [
   "Final submission",
 ];
 
+// Progress is spread evenly across the stages, so each stage fills its own slice.
+// Shared by every portal view that draws the timeline, so they always agree.
+function getStageProgress(project) {
+  const progress = project?.progress ?? 0;
+  const stepSize = 100 / timeline.length;
+  const completedSteps = project ? Math.floor(progress / stepSize) : 0;
+  const currentIndex =
+    project && completedSteps < timeline.length ? completedSteps : -1;
+  const currentFill =
+    currentIndex === -1
+      ? 0
+      : Math.min(
+          100,
+          Math.max(0, ((progress - completedSteps * stepSize) / stepSize) * 100),
+        );
+
+  return {
+    progress,
+    completedSteps,
+    currentIndex,
+    currentFill,
+    currentStage: currentIndex === -1 ? null : timeline[currentIndex],
+    nextStage:
+      currentIndex >= 0 && currentIndex + 1 < timeline.length
+        ? timeline[currentIndex + 1]
+        : null,
+  };
+}
+
 export function StudentDashboard() {
   const [activities, setActivities] = useState([]);
   const [supervisorRequest, setSupervisorRequest] = useState(null);
@@ -28,11 +68,20 @@ export function StudentDashboard() {
   const project =
     data?.project && typeof data.project === "object" ? data.project : null;
   const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
+
+  const {
+    progress: projectProgress,
+    completedSteps,
+    currentIndex: currentStepIndex,
+    currentFill: currentStepFill,
+    currentStage,
+  } = getStageProgress(project);
+
   const metrics = [
     { label: "Project stage", value: project?.stage || "Not started" },
     {
-      label: "Chapters submitted",
-      value: `${chapters.filter((chapter) => chapter.status === "submitted").length} / ${chapters.length}`,
+      label: "Chapters approved",
+      value: `${chapters.filter((chapter) => chapter.status === "approved").length} / ${chapters.length || 5}`,
     },
     { label: "Deadline", value: project?.deadline || "Not set" },
     { label: "Overall grade", value: project?.grade || "Not released" },
@@ -95,34 +144,80 @@ export function StudentDashboard() {
       <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="space-y-6">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-slate-900">
                 Project timeline
               </h2>
               <p className="text-sm text-slate-500">
-                {project ? `${project.progress}% complete` : "No project yet"}
+                {project ? `${projectProgress}% complete` : "No project yet"}
               </p>
             </div>
+
+            <p className="mb-4 text-sm text-slate-600">
+              {project ? (
+                currentStage ? (
+                  <>
+                    Current stage:{" "}
+                    <span className="font-medium text-slate-900">
+                      {currentStage}
+                    </span>
+                  </>
+                ) : (
+                  "All stages complete."
+                )
+              ) : (
+                "Your timeline appears once a project has been created."
+              )}
+            </p>
+
+            {project ? (
+              <div
+                className="mb-5 h-2 w-full overflow-hidden rounded-full bg-slate-100"
+                role="progressbar"
+                aria-valuenow={projectProgress}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-label="Project progress"
+              >
+                <div
+                  className="h-full rounded-full bg-indigo-600 transition-all duration-500"
+                  style={{ width: `${projectProgress}%` }}
+                />
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap gap-3">
               {timeline.map((step, index) => {
-                const completed = project
-                  ? index <
-                    Math.floor((project.progress / 100) * timeline.length)
-                  : false;
-                const active = Boolean(project) && !completed && index === 0;
+                const completed = index < completedSteps;
+                const current = index === currentStepIndex;
+                // Completed stages are fully filled; the current one fills by how
+                // far the student is through that stage; later ones stay empty.
+                const fill = completed ? 100 : current ? currentStepFill : 0;
                 return (
                   <div
                     key={step}
-                    className="flex min-w-[120px] flex-1 flex-col items-center gap-2 rounded-xl border border-slate-200 p-3 text-center"
+                    className={`relative min-w-[120px] flex-1 overflow-hidden rounded-xl border p-3 ${current ? "border-indigo-300" : "border-slate-200"}`}
                   >
                     <div
-                      className={`flex h-10 w-10 items-center justify-center rounded-full ${completed ? "bg-indigo-600 text-white" : active ? "border-2 border-indigo-600 bg-white text-indigo-600" : "bg-slate-100 text-slate-500"}`}
-                    >
-                      {completed ? <CheckCircle2 size={18} /> : index + 1}
+                      aria-hidden="true"
+                      className="absolute inset-y-0 left-0 bg-indigo-50 transition-all duration-500"
+                      style={{ width: `${fill}%` }}
+                    />
+                    <div className="relative flex flex-col items-center gap-2 text-center">
+                      <div
+                        className={`flex h-10 w-10 items-center justify-center rounded-full ${completed ? "bg-indigo-600 text-white" : current ? "border-2 border-indigo-600 bg-white text-indigo-600" : "bg-slate-100 text-slate-500"}`}
+                      >
+                        {completed ? <CheckCircle2 size={18} /> : index + 1}
+                      </div>
+                      <span className="text-sm font-medium text-slate-700">
+                        {step}
+                      </span>
+                      {current ? (
+                        <span className="text-xs font-medium text-indigo-600">
+                          In progress
+                        </span>
+                      ) : null}
                     </div>
-                    <span className="text-sm font-medium text-slate-700">
-                      {step}
-                    </span>
                   </div>
                 );
               })}
@@ -213,13 +308,49 @@ export function StudentDashboard() {
   );
 }
 
+function StatusSummaryCard({ title, children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 p-5">
+      <h3 className="font-semibold text-slate-900">{title}</h3>
+      <div className="mt-3 space-y-3 text-sm">{children}</div>
+    </div>
+  );
+}
+
+function StatusSummaryRow({ label, children }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-medium text-slate-900">{children}</span>
+    </div>
+  );
+}
+
 export function StudentProjectPage() {
+  const [activeTab, setActiveTab] = useState("topic");
   const [supervisorRequest, setSupervisorRequest] = useState(null);
   const [requestMessage, setRequestMessage] = useState("");
   const [requestingSupervisor, setRequestingSupervisor] = useState(false);
   const [requestError, setRequestError] = useState("");
-  const { data } = usePortalData();
-  const topics = Array.isArray(data?.topics) ? data.topics : [];
+  const { data, loading: portalLoading } = usePortalData();
+
+  // Mutations return the authoritative record; otherwise fall back to the shared portal payload.
+  const [topicOverride, setTopicOverride] = useState(null);
+  const [proposalOverride, setProposalOverride] = useState(null);
+  const topic = topicOverride ?? data?.topic ?? null;
+  const proposal = proposalOverride ?? data?.proposal ?? null;
+
+  const [topicTitle, setTopicTitle] = useState("");
+  const [submittingTopic, setSubmittingTopic] = useState(false);
+  const [topicError, setTopicError] = useState("");
+  const [topicSuccess, setTopicSuccess] = useState("");
+
+  const [proposalTitle, setProposalTitle] = useState("");
+  const [proposalDescription, setProposalDescription] = useState("");
+  const [proposalFile, setProposalFile] = useState(null);
+  const [submittingProposal, setSubmittingProposal] = useState(false);
+  const [proposalError, setProposalError] = useState("");
+  const [proposalSuccess, setProposalSuccess] = useState("");
 
   useEffect(() => {
     supervisorApi
@@ -227,6 +358,21 @@ export function StudentProjectPage() {
       .then((response) => setSupervisorRequest(response.request ?? null))
       .catch(() => setSupervisorRequest(null));
   }, []);
+
+  const topicStatus = topic?.status ?? null;
+  const topicAccepted = topicStatus === "accepted";
+  const canSubmitTopic = !topic || topicStatus === "declined";
+  const proposalLocked = !topic || topicStatus === "pending";
+
+  const project = data?.project ?? null;
+  const {
+    progress: projectProgress,
+    completedSteps,
+    currentIndex: currentStepIndex,
+    currentFill: currentStepFill,
+    currentStage,
+    nextStage,
+  } = getStageProgress(project);
 
   const handleSupervisorRequest = async () => {
     setRequestingSupervisor(true);
@@ -242,29 +388,110 @@ export function StudentProjectPage() {
     }
   };
 
+  const handleSubmitTopic = async (event) => {
+    event.preventDefault();
+    const title = topicTitle.trim();
+    if (!title) {
+      setTopicError("Enter your project topic before submitting.");
+      return;
+    }
+
+    setSubmittingTopic(true);
+    setTopicError("");
+    setTopicSuccess("");
+
+    try {
+      const response = await topicApi.submit(title);
+      setTopicOverride(response.topic ?? null);
+      setTopicTitle("");
+      setTopicSuccess("Your topic was submitted and is awaiting supervisor review.");
+    } catch (error) {
+      setTopicError(error.message || "Unable to submit your topic.");
+    } finally {
+      setSubmittingTopic(false);
+    }
+  };
+
+  const handleSubmitProposal = async (event) => {
+    event.preventDefault();
+
+    if (!topicAccepted) {
+      setProposalError("Your topic must be accepted before you can submit a proposal.");
+      return;
+    }
+
+    const title = proposalTitle.trim() || topic?.title || "";
+    if (!title) {
+      setProposalError("Enter a project title for your proposal.");
+      return;
+    }
+
+    setSubmittingProposal(true);
+    setProposalError("");
+    setProposalSuccess("");
+
+    try {
+      let documentId = null;
+      if (proposalFile) {
+        const formData = new FormData();
+        formData.append("file", proposalFile);
+        const uploadResponse = await documentsApi.upload(formData);
+        documentId = uploadResponse.document?.id ?? null;
+      }
+
+      const response = await proposalApi.submit({
+        title,
+        description: proposalDescription.trim(),
+        documentId,
+      });
+      setProposalOverride(response.proposal ?? null);
+      setProposalFile(null);
+      setProposalSuccess("Your proposal was submitted successfully.");
+    } catch (error) {
+      setProposalError(error.message || "Unable to submit your proposal.");
+    } finally {
+      setSubmittingProposal(false);
+    }
+  };
+
+  const tabs = [
+    { id: "topic", label: "Topic selection" },
+    { id: "proposal", label: "Proposal", locked: proposalLocked },
+    { id: "status", label: "Status" },
+  ];
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">
-            Project setup
-          </h2>
+          <h2 className="text-xl font-semibold text-slate-900">Project setup</h2>
           <p className="text-sm text-slate-500">
-            Manage your topic request, proposal, and approval status.
+            Submit your topic, then your proposal once it has been accepted.
           </p>
         </div>
         <div className="flex gap-2 rounded-full bg-slate-100 p-1 text-sm">
-          <button className="rounded-full bg-white px-3 py-1 font-medium text-slate-900 shadow-sm">
-            Topic selection
-          </button>
-          <button className="rounded-full px-3 py-1 text-slate-600">
-            Proposal
-          </button>
-          <button className="rounded-full px-3 py-1 text-slate-600">
-            Status
-          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              disabled={tab.locked}
+              title={tab.locked ? "Available once your topic is accepted" : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 disabled:cursor-not-allowed ${
+                activeTab === tab.id
+                  ? "bg-white font-medium text-slate-900 shadow-sm"
+                  : tab.locked
+                    ? "text-slate-400"
+                    : "text-slate-600"
+              }`}
+            >
+              {tab.locked ? <Lock size={13} /> : null}
+              {tab.label}
+            </button>
+          ))}
         </div>
       </div>
+
       <div className="mb-6 rounded-2xl border border-indigo-200 bg-indigo-50 p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
@@ -284,9 +511,7 @@ export function StudentProjectPage() {
               disabled={requestingSupervisor}
               className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
-              {requestingSupervisor
-                ? "Sending request..."
-                : "Request supervisor"}
+              {requestingSupervisor ? "Sending request..." : "Request supervisor"}
             </button>
           ) : null}
         </div>
@@ -302,287 +527,386 @@ export function StudentProjectPage() {
           <p className="mt-2 text-sm text-red-700">{requestError}</p>
         ) : null}
       </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {topics.map((topic) => (
-          <div
-            key={topic.title}
-            className={`rounded-2xl border p-4 ${topic.availability === "available" ? "border-slate-200" : "border-slate-200 bg-slate-50 opacity-80"}`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="font-semibold text-slate-900">{topic.title}</h3>
-              <span
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${topic.availability === "available" ? "bg-emerald-50 text-emerald-700" : "bg-slate-200 text-slate-700"}`}
-              >
-                {topic.availability}
-              </span>
+
+      {activeTab === "topic" ? (
+        <div className="space-y-5">
+          {portalLoading && !topic ? (
+            <p className="text-sm text-slate-500">Loading your topic...</p>
+          ) : null}
+
+          {topic ? (
+            <div className="rounded-2xl border border-slate-200 p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm text-slate-500">Submitted topic</p>
+                  <h3 className="mt-1 font-semibold text-slate-900">
+                    {topic.title || "Untitled topic"}
+                  </h3>
+                </div>
+                <StatusBadge status={topic.status} />
+              </div>
+
+              {topicStatus === "pending" ? (
+                <div className="mt-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-800">
+                  Your topic is waiting for supervisor or coordinator review.
+                </div>
+              ) : null}
+
+              {topicStatus === "accepted" ? (
+                <div className="mt-4 rounded-xl bg-emerald-50 p-4 text-sm text-emerald-800">
+                  Your topic has been accepted. You can now submit your proposal on the
+                  Proposal tab.
+                </div>
+              ) : null}
+
+              {topicStatus === "declined" ? (
+                <div className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-800">
+                  <p className="font-medium">Your topic was declined.</p>
+                  {topic.declineReason ? (
+                    <p className="mt-1">{topic.declineReason}</p>
+                  ) : null}
+                  <p className="mt-1">You can submit a revised topic below.</p>
+                </div>
+              ) : null}
             </div>
-            <p className="mt-2 text-sm text-slate-600">{topic.department}</p>
-            <button className="mt-4 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700">
-              {topic.availability === "available"
-                ? "Request topic"
-                : "Unavailable"}
+          ) : null}
+
+          {!portalLoading && !topic ? (
+            <p className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+              You have not submitted a project topic yet.
+            </p>
+          ) : null}
+
+          {canSubmitTopic ? (
+            <form onSubmit={handleSubmitTopic} className="rounded-2xl border border-slate-200 p-5">
+              <label className="mb-1 block text-sm font-medium text-slate-700">
+                {topicStatus === "declined"
+                  ? "Submit a revised project topic"
+                  : "Propose your project topic"}
+              </label>
+              <input
+                value={topicTitle}
+                onChange={(event) => setTopicTitle(event.target.value)}
+                placeholder="e.g. A machine learning approach to early disease detection"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-500"
+              />
+              <div className="mt-3 space-y-2">
+                <Feedback>{topicError}</Feedback>
+                <Feedback tone="success">{topicSuccess}</Feedback>
+              </div>
+              <button
+                type="submit"
+                disabled={submittingTopic}
+                className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {submittingTopic ? "Submitting..." : "Submit Topic"}
+              </button>
+            </form>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {topicStatus === "pending"
+                ? "You cannot submit a new topic while the current one is awaiting review."
+                : "Your topic has been accepted, so no further submission is needed."}
+            </p>
+          )}
+        </div>
+      ) : null}
+
+      {activeTab === "proposal" ? (
+        topicAccepted ? (
+          <div className="space-y-5">
+            <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              Your topic was accepted — you can submit your proposal.
+            </p>
+
+            {proposal ? (
+              <div className="rounded-2xl border border-slate-200 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-slate-500">Submitted proposal</p>
+                    <h3 className="mt-1 font-semibold text-slate-900">
+                      {proposal.title || "Untitled proposal"}
+                    </h3>
+                  </div>
+                  <StatusBadge status={proposal.status} />
+                </div>
+                {proposal.description ? (
+                  <p className="mt-3 text-sm text-slate-600">{proposal.description}</p>
+                ) : null}
+                {proposal.submittedAt ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Submitted {new Date(proposal.submittedAt).toLocaleString()}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <form onSubmit={handleSubmitProposal} className="rounded-2xl border border-slate-200 p-5">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Project title
+                </label>
+                <input
+                  value={proposalTitle}
+                  onChange={(event) => setProposalTitle(event.target.value)}
+                  placeholder={topic?.title || "Project title"}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-500"
+                />
+                <p className="mt-1 text-xs text-slate-500">
+                  Leave blank to use your accepted topic title.
+                </p>
+              </div>
+              <div className="mt-4">
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Proposal description
+                </label>
+                <textarea
+                  value={proposalDescription}
+                  onChange={(event) => setProposalDescription(event.target.value)}
+                  placeholder="Summarise your proposed project, objectives, and methodology."
+                  className="min-h-28 w-full rounded-xl border border-slate-200 px-3 py-2.5 outline-none focus:border-indigo-500"
+                />
+              </div>
+              <div className="mt-4">
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Proposal document (optional)
+                </label>
+                <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600">
+                  <FileText size={16} className="text-indigo-600" />
+                  {proposalFile ? proposalFile.name : "Attach a PDF or DOCX (20MB max)"}
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(event) => setProposalFile(event.target.files?.[0] ?? null)}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 space-y-2">
+                <Feedback>{proposalError}</Feedback>
+                <Feedback tone="success">{proposalSuccess}</Feedback>
+              </div>
+              <button
+                type="submit"
+                disabled={submittingProposal}
+                className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {submittingProposal ? "Submitting..." : "Submit Proposal"}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center">
+            <Lock className="mx-auto text-slate-400" size={22} />
+            <p className="mt-3 font-semibold text-slate-900">Proposal locked</p>
+            <p className="mx-auto mt-1 max-w-lg text-sm text-slate-600">
+              {topicStatus === "declined"
+                ? "Your topic was declined. Submit a revised topic and wait for it to be accepted before submitting your proposal."
+                : "Your topic is awaiting supervisor approval. You can submit your proposal after your topic has been accepted."}
+            </p>
+            {topicStatus === "declined" && topic?.declineReason ? (
+              <p className="mx-auto mt-3 max-w-lg rounded-xl bg-red-50 px-3 py-2 text-sm text-red-800">
+                Reason: {topic.declineReason}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setActiveTab("topic")}
+              className="mt-4 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white"
+            >
+              {topicStatus === "declined" ? "Submit a revised topic" : "Go to Topic Selection"}
             </button>
           </div>
-        ))}
-        {!topics.length ? (
-          <p className="rounded-xl border border-slate-200 p-5 text-sm text-slate-500 md:col-span-2 xl:col-span-3">
-            No project topics are available yet.
-          </p>
-        ) : null}
-      </div>
+        )
+      ) : null}
+
+      {activeTab === "status" ? (
+        <div className="grid gap-4 md:grid-cols-2">
+          <StatusSummaryCard title="Topic">
+            <StatusSummaryRow label="Submitted topic">
+              {topic?.title || "Not submitted"}
+            </StatusSummaryRow>
+            <StatusSummaryRow label="Topic status">
+              <StatusBadge status={topic?.status} fallback="Not submitted" />
+            </StatusSummaryRow>
+          </StatusSummaryCard>
+
+          <StatusSummaryCard title="Supervisor">
+            <StatusSummaryRow label="Supervisor">
+              {supervisorRequest?.supervisor?.name || "Not assigned"}
+            </StatusSummaryRow>
+            <StatusSummaryRow label="Assignment status">
+              <StatusBadge
+                status={supervisorRequest?.status}
+                fallback="Not assigned"
+              />
+            </StatusSummaryRow>
+          </StatusSummaryCard>
+
+          <StatusSummaryCard title="Proposal">
+            <StatusSummaryRow label="Proposal status">
+              <StatusBadge status={proposal?.status} fallback="Not submitted" />
+            </StatusSummaryRow>
+            <StatusSummaryRow label="Submission">
+              <StatusBadge status={topicAccepted ? "available" : "not available"} />
+            </StatusSummaryRow>
+          </StatusSummaryCard>
+
+          <StatusSummaryCard title="Project stage">
+            <StatusSummaryRow label="Current stage">
+              {project ? currentStage || "All stages complete" : "Not started"}
+            </StatusSummaryRow>
+            {project ? (
+              <>
+                <StatusSummaryRow label="Progress">
+                  {projectProgress}%
+                </StatusSummaryRow>
+                {/* Overall fill, then one segment per stage so the student can see
+                    which stage they are in and how far through it they are. */}
+                <div
+                  className="h-2 w-full overflow-hidden rounded-full bg-slate-100"
+                  role="progressbar"
+                  aria-valuenow={projectProgress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Project progress"
+                >
+                  <div
+                    className="h-full rounded-full bg-indigo-600 transition-all duration-500"
+                    style={{ width: `${projectProgress}%` }}
+                  />
+                </div>
+                <div className="flex gap-1">
+                  {timeline.map((step, index) => {
+                    const completed = index < completedSteps;
+                    const current = index === currentStepIndex;
+                    // Completed stages are full; the current one fills by how far
+                    // the student is through it; later stages stay empty.
+                    const fill = completed ? 100 : current ? currentStepFill : 0;
+                    return (
+                      <div
+                        key={step}
+                        title={step}
+                        aria-hidden="true"
+                        className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"
+                      >
+                        <div
+                          className="h-full rounded-full bg-indigo-600 transition-all duration-500"
+                          style={{ width: `${fill}%` }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Step {Math.min(completedSteps + 1, timeline.length)} of{" "}
+                  {timeline.length}
+                  {nextStage ? ` · Next: ${nextStage}` : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-slate-500">
+                Your progress appears once a project has been created.
+              </p>
+            )}
+          </StatusSummaryCard>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function StudentDocumentsPage() {
-  const [documents, setDocuments] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [downloadingId, setDownloadingId] = useState("");
-  const [message, setMessage] = useState("");
-  const { data } = usePortalData();
-  const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
-
-  const handleUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    setUploading(true);
-    setMessage("");
-
-    try {
-      const response = await documentsApi.upload(formData);
-      setDocuments((current) => [response.document, ...current]);
-      setMessage("File uploaded successfully.");
-    } catch (err) {
-      setMessage(err.message || "Upload failed");
-    } finally {
-      setUploading(false);
-      event.target.value = "";
-    }
-  };
-
-  const handleDownload = async (document) => {
-    setDownloadingId(document.id);
-    setMessage("");
-
-    try {
-      const blob = await documentsApi.download(document.id);
-      const objectUrl = window.URL.createObjectURL(blob);
-      // `document` shadows the global here, so reach the DOM through `window`.
-      const link = window.document.createElement("a");
-      link.href = objectUrl;
-      link.download = document.originalName;
-      window.document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(objectUrl);
-    } catch (err) {
-      setMessage(err.message || "Download failed");
-    } finally {
-      setDownloadingId("");
-    }
-  };
-
-  const previewDocuments = useMemo(() => documents.slice(0, 3), [documents]);
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Chapters</h2>
-        <div className="mt-4 space-y-2">
-          {chapters.map((chapter) => (
-            <button
-              key={chapter.title}
-              className="flex w-full items-center justify-between rounded-xl border border-slate-200 px-3 py-3 text-left"
-            >
-              <span className="font-medium text-slate-800">
-                {chapter.title}
-              </span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                {chapter.status}
-              </span>
-            </button>
-          ))}
-          {!chapters.length ? (
-            <p className="text-sm text-slate-500">
-              No chapters have been created for your project.
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                Chapter 4 — Methodology
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                Upload your latest PDF or DOCX.
-              </p>
-            </div>
-            <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-              Needs revision
-            </span>
-          </div>
-          <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center">
-            <UploadCloud className="mx-auto text-indigo-600" size={24} />
-            <p className="mt-3 font-medium text-slate-900">
-              Drag and drop your chapter here
-            </p>
-            <p className="text-sm text-slate-500">
-              PDF, Word, PowerPoint, Excel, CSV, TXT, ZIP or image • 20MB max
-            </p>
-            <label className="mt-4 inline-flex cursor-pointer rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-              {uploading ? "Uploading..." : "Browse files"}
-              <input
-                type="file"
-                className="hidden"
-                accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.zip,.png,.jpg,.jpeg"
-                onChange={handleUpload}
-              />
-            </label>
-          </div>
-          {message ? (
-            <p className="mt-3 text-sm text-slate-600">{message}</p>
-          ) : null}
-          {previewDocuments.length ? (
-            <div className="mt-5 space-y-3 rounded-xl border border-slate-200 p-4">
-              {previewDocuments.map((document) => (
-                <div
-                  key={document.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate font-medium text-slate-900">
-                      {document.originalName}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      {Math.round(document.size / 1024)} KB • Uploaded to server
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDownload(document)}
-                      disabled={downloadingId === document.id}
-                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {downloadingId === document.id ? "Downloading..." : "Download"}
-                    </button>
-                    <button className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white">
-                      Submit for review
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Final submission checklist
-          </h2>
-          <div className="mt-4 space-y-3">
-            {[
-              "All chapters approved",
-              "Supervisor sign-off",
-              "Title page included",
-              "Declaration page included",
-            ].map((item) => (
-              <label
-                key={item}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2"
-              >
-                <input
-                  type="checkbox"
-                  defaultChecked
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600"
-                />
-                <span className="text-sm text-slate-700">{item}</span>
-              </label>
-            ))}
-          </div>
-          <button className="mt-5 rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-            Submit final project
-          </button>
-        </div>
-      </div>
-    </div>
-  );
+  return <StudentChapters />;
 }
 
 export function StudentCommunicationPage() {
   const { data } = usePortalData();
+  const [activeTab, setActiveTab] = useState("messages");
   const messages = Array.isArray(data?.messages) ? data.messages : [];
-  const supervisorName =
-    data?.supervisorRequest?.supervisor?.name || "Supervisor";
+  const supervisor = data?.supervisorRequest?.supervisor ?? null;
+  const supervisorName = supervisor?.name || "Supervisor";
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-lg font-semibold text-slate-900">Threads</h2>
-        <div className="mt-4 space-y-2">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className="rounded-xl border border-slate-200 p-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <p className="font-medium text-slate-900">Message</p>
-              </div>
-              <p className="mt-1 text-sm text-slate-500">{message.body}</p>
-            </div>
-          ))}
-          {!messages.length ? (
-            <p className="text-sm text-slate-500">No messages yet.</p>
-          ) : null}
-        </div>
+    <div className="space-y-6">
+      <div className="flex flex-wrap gap-2 rounded-full bg-slate-100 p-1 text-sm">
+        {[
+          { id: "messages", label: "Messages" },
+          { id: "meetings", label: "Meeting requests" },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setActiveTab(tab.id)}
+            aria-pressed={activeTab === tab.id}
+            className={`rounded-full px-3 py-1 font-medium ${
+              activeTab === tab.id
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-600"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-          <div>
-            <h2 className="font-semibold text-slate-900">{supervisorName}</h2>
-            <p className="text-sm text-slate-500">Supervisor</p>
-          </div>
-          <Link
-            to="/app/student/communication/meetings"
-            className="text-sm font-medium text-indigo-600"
-          >
-            Meetings
-          </Link>
-        </div>
-        <div className="mt-4 space-y-3">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`max-w-[80%] rounded-2xl p-3 text-sm ${message.senderId === message.recipientId ? "bg-slate-100 text-slate-700" : "ml-auto bg-indigo-600 text-white"}`}
-            >
-              {message.body}
+      {activeTab === "messages" ? (
+        <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <h2 className="text-lg font-semibold text-slate-900">Threads</h2>
+            <div className="mt-4 space-y-2">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className="rounded-xl border border-slate-200 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-medium text-slate-900">Message</p>
+                  </div>
+                  <p className="mt-1 text-sm text-slate-500">{message.body}</p>
+                </div>
+              ))}
+              {!messages.length ? (
+                <p className="text-sm text-slate-500">No messages yet.</p>
+              ) : null}
             </div>
-          ))}
-          {!messages.length ? (
-            <p className="text-sm text-slate-500">
-              Start a conversation with your supervisor.
-            </p>
-          ) : null}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div>
+                <h2 className="font-semibold text-slate-900">{supervisorName}</h2>
+                <p className="text-sm text-slate-500">Supervisor</p>
+              </div>
+            </div>
+            <div className="mt-4 space-y-3">
+              {messages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`max-w-[80%] rounded-2xl p-3 text-sm ${message.senderId === message.recipientId ? "bg-slate-100 text-slate-700" : "ml-auto bg-indigo-600 text-white"}`}
+                >
+                  {message.body}
+                </div>
+              ))}
+              {!messages.length ? (
+                <p className="text-sm text-slate-500">
+                  Start a conversation with your supervisor.
+                </p>
+              ) : null}
+            </div>
+            <div className="mt-4 flex items-end gap-2 rounded-2xl border border-slate-200 p-3">
+              <textarea
+                className="min-h-[80px] flex-1 resize-none border-0 outline-none"
+                placeholder="Write a message"
+              />
+              <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
+                Send
+              </button>
+            </div>
+          </div>
         </div>
-        <div className="mt-4 flex items-end gap-2 rounded-2xl border border-slate-200 p-3">
-          <textarea
-            className="min-h-[80px] flex-1 resize-none border-0 outline-none"
-            placeholder="Write a message"
-          />
-          <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-            Send
-          </button>
-        </div>
-      </div>
+      ) : (
+        <StudentMeetingRequests supervisor={supervisor} />
+      )}
     </div>
   );
 }
