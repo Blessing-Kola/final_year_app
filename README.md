@@ -1,53 +1,107 @@
-# React + Vite
+# Final Year Project Management System
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The repository contains exactly two application directories:
 
-Currently, two official plugins are available:
+- `frontend/` — React and Vite client.
+- `backend/` — Express API and server-only Supabase client.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The frontend and backend are independent npm projects with their own
+`package.json`, lockfile, and environment example. Supabase database setup
+remains in `supabase/schema.sql`.
 
-## React Compiler
+## Requirements
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+- Node.js 22+ and npm.
+- A Supabase project.
 
-Note: This will impact Vite dev & build performances.
+## Local setup
 
-## Expanding the ESLint configuration
+Install and configure each app separately:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
-# final_year_app
+```powershell
+Set-Location backend
+npm install
+Copy-Item .env.example .env
+```
 
-## Vercel deployment
+Set `JWT_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and
+`CLIENT_URLS` in `backend/.env`. Use a strong random JWT secret.
 
-The Express app is exported from `server.js` for Vercel and still starts locally
-with `npm start`. `vercel.json` runs the Vite production build and includes
-`dist/` in the Express function, which serves the built SPA and API from the
-same deployment.
+In a second terminal:
 
-Before deploying:
+```powershell
+Set-Location frontend
+npm install
+Copy-Item .env.example .env
+npm run dev
+```
 
-1. Run `supabase/schema.sql` in the Supabase SQL Editor. It creates the private
-   `project-documents` Storage bucket as well as the application tables.
-2. Set these environment variables for the Vercel Production and Preview
-   environments:
-   - `JWT_SECRET`: a unique, high-entropy secret.
-   - `SUPABASE_URL`: the project URL.
-   - `SUPABASE_SERVICE_ROLE_KEY`: the server-only service-role key. Never use a
-     `VITE_` prefix for this value.
-   - `VITE_SUPABASE_URL`: the same project URL; this is public configuration.
-   - `VITE_SUPABASE_ANON_KEY`: the publishable/anon key; this is public
-     configuration and is used only with short-lived signed upload URLs.
-   - `CLIENT_URL`: the deployed site origin.
-   - `VITE_API_URL=/api` and `SUPABASE_STORAGE_BUCKET=project-documents`.
-3. Import the Git repository into Vercel and deploy from the repository root.
-   Vercel uses `vercel.json` and the existing `npm run build` script.
-4. Test login, role-protected API routes, page refresh/deep links, document
-   uploads, and document downloads in both Preview and Production.
+The frontend runs on `http://localhost:5173`; its example `VITE_API_URL`
+connects to the API at `http://localhost:5000/api`. Start the backend in the
+first terminal with `npm run dev` (or `npm start`). Set the frontend's
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to the same project for direct
+signed uploads. The service-role key must only be set in the backend and must
+never use a `VITE_` prefix.
 
-Documents upload directly to the private Supabase bucket using short-lived
-signed URLs, so file bytes do not pass through Vercel Functions or temporary
-local storage. Downloads are authorized by the Express API before it returns a
-short-lived signed URL. Existing documents whose database `path` contains an
-old local filesystem path must be migrated into the bucket and their `path`
-updated before those files can be accessed from Vercel.
+Apply `supabase/schema.sql` in the Supabase SQL Editor before using application
+workflows that depend on the database or Storage.
+
+## Checks
+
+Run commands from the corresponding app directory:
+
+```sh
+# frontend
+npm run lint
+npm test
+npm run build
+
+# backend
+npm run check
+npm test
+```
+
+## Deploy frontend and backend independently on Vercel
+
+Connect the same GitHub repository to two separate Vercel projects. For both,
+set the project Root Directory in Vercel settings (do not use the repository
+root).
+
+### Frontend Vercel project
+
+- Root Directory: `frontend`
+- Framework preset: Vite (auto-detected)
+- Build command: `npm run build`
+- Output directory: `dist`
+- Environment variables:
+  - `VITE_API_URL=https://<backend-project>.vercel.app/api`
+  - `VITE_SUPABASE_URL=https://<project-ref>.supabase.co`
+  - `VITE_SUPABASE_ANON_KEY=<publishable-or-anon-key>`
+
+The Vite configuration fails production builds if `VITE_API_URL` is missing,
+uses HTTP, points to localhost, or does not end with `/api`. `frontend/vercel.json`
+provides client-side route fallback for React Router.
+
+### Backend Vercel project
+
+- Root Directory: `backend`
+- Runtime: Node.js; Vercel detects the Express application exported by
+  `backend/server.js`.
+- Environment variables:
+  - `JWT_SECRET=<unique-high-entropy-secret>`
+  - `SUPABASE_URL=https://<project-ref>.supabase.co`
+  - `SUPABASE_SERVICE_ROLE_KEY=<server-only-service-role-key>`
+  - `SUPABASE_STORAGE_BUCKET=project-documents`
+  - `CLIENT_URLS=https://<frontend-project>.vercel.app`
+
+For Preview deployments, add their frontend origins to `CLIENT_URLS` as a
+comma-separated list, or configure environment-specific values. The backend
+serves API routes only; the frontend is a separate static Vercel project.
+Documents use short-lived signed URLs to the private Supabase Storage bucket,
+not local Vercel disk.
+
+After both projects deploy, verify login, role authorization, database-backed
+dashboards, chapter/proposal workflows, direct uploads and downloads, and
+frontend deep links. Existing database document rows containing local
+filesystem paths need their files migrated to Supabase Storage before they can
+be downloaded from production.

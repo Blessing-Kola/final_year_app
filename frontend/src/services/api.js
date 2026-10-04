@@ -2,9 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 
 // A relative base keeps requests same-origin: Vite proxies "/api" to Express in
 // dev, and Express serves the built client itself in production. Pointing this
-// at an absolute http://localhost:5000 makes every call cross-origin, which
-// means a preflight on each one and a hard failure if any response is missing
-// an Access-Control-Allow-Origin header.
+// at an absolute localhost URL makes every call cross-origin and depends on
+// the API's CORS configuration.
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;

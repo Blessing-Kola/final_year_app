@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { portalApi } from "../services/api";
-import { sanitizePortalData } from "../lib/sanitizePortalData";
+import { sanitizePortalData } from "../utils/sanitizePortalData";
 
 export function usePortalData() {
     const [data, setData] = useState(null);

@@ -24,14 +24,14 @@ import DefenceChecklist from "../../components/DefenceChecklist";
 import DefenceDayCard from "../../components/DefenceDayCard";
 import { StudentMeetingRequests } from "../../components/MeetingRequests";
 import StudentChapters from "../../components/StudentChapters";
-import { SCORE_MAX } from "../../lib/scores";
-import { PROJECT_TIMELINE, readStageProgress } from "../../lib/projectStage";
-import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../lib/defenceDay";
+import { SCORE_MAX } from "../../utils/scores.js";
+import { PROJECT_TIMELINE, readStageProgress } from "../../utils/projectStage.js";
+import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../utils/defenceDay";
 import { usePortalData } from "../../hooks/usePortalData";
 import { useDefenceSchedule } from "../../hooks/useDefenceSchedule";
 import { useAuth } from "../../context/useAuth";
 
-// Both live in src/lib/projectStage.js, beside the server's derivation of the same
+// Both live in src/utils/projectStage.js, beside the server's derivation of the same
 // stage, so the timeline a student sees and the one the supervisor sees are drawn
 // from one list. The local names are kept because the rest of this file reads better
 // with them.

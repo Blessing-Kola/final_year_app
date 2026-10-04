@@ -11,16 +11,15 @@ import { defenceApi } from "../../services/api";
 import { usePortalData } from "../../hooks/usePortalData";
 import { useDefenceSchedule } from "../../hooks/useDefenceSchedule";
 import { useAuth } from "../../context/useAuth";
-import { hasUnreadFrom, lastMessageWith } from "../../lib/messages";
+import { hasUnreadFrom, lastMessageWith } from "../../utils/messages.js";
 import {
   SCORE_MAX,
   SUPERVISOR_CRITERIA,
   calculateReportScore,
-} from "../../lib/scores";
-import { formatTimestamp } from "../../lib/defenceDay";
-// The stage list itself lives in src/lib/projectStage.js, beside the server's
-// derivation of the same stage, so both portals draw the same six steps.
-import { PROJECT_TIMELINE as TIMELINE } from "../../lib/projectStage";
+} from "../../utils/scores.js";
+import { formatTimestamp } from "../../utils/defenceDay";
+// The stage list mirrors the backend derivation so both portals draw the same six steps.
+import { PROJECT_TIMELINE as TIMELINE } from "../../utils/projectStage.js";
 
 export function SupervisorDashboard() {
   const { data } = usePortalData();

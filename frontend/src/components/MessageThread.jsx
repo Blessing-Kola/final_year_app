@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import { messageApi } from "../services/api";
 import { Feedback } from "./StatusBadge";
-import { isUnread } from "../lib/messages";
+import { isUnread } from "../utils/messages.js";
 
 // How often an open thread re-checks for the other person's reply. Polling
 // rather than a socket: the API is a plain Express app with no realtime channel,

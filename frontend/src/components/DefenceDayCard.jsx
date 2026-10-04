@@ -1,6 +1,6 @@
 import { CalendarDays, Clock, MapPin } from "lucide-react";
 import { Feedback } from "./StatusBadge";
-import { formatDefenceDate, formatDefenceTime } from "../lib/defenceDay";
+import { formatDefenceDate, formatDefenceTime } from "../utils/defenceDay";
 
 // Read-only view of the shared defence day, used on the student and supervisor
 // dashboards and on the defence page. The coordinator's Calendar page has its own

@@ -3,8 +3,8 @@ import { CalendarDays, Clock, MapPin, Save, Send } from "lucide-react";
 import { defenceApi, supervisorApi } from "../../services/api";
 import TopicReviewPanel from "../../components/TopicReviewPanel";
 import { Feedback, StatusBadge } from "../../components/StatusBadge";
-import { SCORE_MAX, describeResult, isWithinRange } from "../../lib/scores";
-import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../lib/defenceDay";
+import { SCORE_MAX, describeResult, isWithinRange } from "../../utils/scores.js";
+import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../utils/defenceDay";
 import { usePortalData } from "../../hooks/usePortalData";
 
 export function CoordinatorDashboard() {

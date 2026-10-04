@@ -1,6 +1,6 @@
+import "./src/config/loadEnv.js";
 import express from "express";
 import cors from "cors";
-import "dotenv/config";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
@@ -8,13 +8,13 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { supabase } from "./src/services/supabaseServer.js";
-import { mergeConversation } from "./src/lib/messages.js";
+import { mergeConversation } from "./src/utils/messages.js";
 import {
     SCORE_MAX,
     calculateReportScore,
     describeResult,
     isWithinRange,
-} from "./src/lib/scores.js";
+} from "./src/utils/scores.js";
 import {
     PROJECT_STAGE_INDEX,
     PROJECT_STATUS,
@@ -22,13 +22,14 @@ import {
     deriveProjectStage,
     isSubmittedProposal,
     progressForStage,
-} from "./src/lib/projectStage.js";
+} from "./src/utils/projectStage.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const uploadsDir = path.join(__dirname, "uploads");
+const projectRoot = path.resolve(__dirname, "..");
+const uploadsDir = path.join(projectRoot, "uploads");
 const DOCUMENTS_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "project-documents";
 
 // Refuse to boot without a real secret. A built-in fallback would let anyone who
@@ -40,19 +41,20 @@ if (!JWT_SECRET) {
     );
 }
 
-// Dev serves the client from Vite on a different port, so the API is reached
-// cross-origin there. Accept the configured client URL plus any loopback origin
-// (localhost or 127.0.0.1, whichever port Vite settled on) and reject the rest.
-// This must stay ahead of the routes below: anything registered before it would
-// answer without these headers and the browser would block the response.
-const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+// Accept configured frontend origins plus localhost during development.
+const CLIENT_URLS = new Set(
+    (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173")
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean),
+);
 const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 app.use(
     cors({
         origin: (origin, callback) => {
             // No Origin header: same-origin request, curl, or a server-to-server call.
-            if (!origin || origin === CLIENT_URL || LOOPBACK_ORIGIN.test(origin)) {
+            if (!origin || CLIENT_URLS.has(origin) || LOOPBACK_ORIGIN.test(origin)) {
                 return callback(null, true);
             }
             return callback(null, false);
@@ -3155,11 +3157,6 @@ app.get("/api/documents/:documentId/download", authenticateToken, async (req, re
     }
 });
 
-app.use(express.static(path.join(__dirname, "dist")));
-app.get(/^\/(?!api).*/, (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
-});
-
 // The topic/proposal/meeting/defence workflows need these tables. Without them the
 // related endpoints return 500 and the matching portal screens stay empty.
 const REQUIRED_TABLES = [
@@ -3193,6 +3190,10 @@ const verifySchema = async () => {
         console.log("Supabase schema OK");
     }
 };
+
+app.use((req, res) => {
+    res.status(404).json({ message: "API route not found" });
+});
 
 export default app;
 
