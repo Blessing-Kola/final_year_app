@@ -7,6 +7,10 @@ const STATUS_STYLES = {
   submitted: "bg-indigo-50 text-indigo-700",
   under_review: "bg-sky-50 text-sky-700",
   completed: "bg-sky-50 text-sky-700",
+  // Defence collation states.
+  collecting: "bg-slate-100 text-slate-600",
+  ready: "bg-indigo-50 text-indigo-700",
+  published: "bg-emerald-50 text-emerald-700",
   not_started: "bg-slate-100 text-slate-500",
   needs_revision: "bg-amber-50 text-amber-700",
   declined: "bg-red-50 text-red-700",

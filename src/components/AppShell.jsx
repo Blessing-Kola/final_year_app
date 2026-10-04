@@ -42,7 +42,6 @@ const navigationByRole = {
       icon: MessagesSquare,
     },
     { name: "Reviews", href: "/app/supervisor/reviews", icon: BookOpen },
-    { name: "Feedback", href: "/app/supervisor/feedback", icon: MessageSquare },
     {
       name: "Scheduling",
       href: "/app/supervisor/scheduling",

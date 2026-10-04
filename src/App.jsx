@@ -61,14 +61,14 @@ const SupervisorStudentsPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
   "SupervisorStudentsPage",
 );
+const SupervisorStudentDetailPage = lazyNamed(
+  () => import("./pages/portal/SupervisorPortal"),
+  "SupervisorStudentDetailPage",
+);
 const SupervisorReviewsPage = lazy(() =>
   import("./pages/portal/SupervisorPortal").then((module) => ({
     default: module.SupervisorReviewsPage,
   })),
-);
-const SupervisorFeedbackPage = lazyNamed(
-  () => import("./pages/portal/SupervisorPortal"),
-  "SupervisorFeedbackPage",
 );
 const SupervisorSchedulingPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
@@ -253,13 +253,11 @@ function App() {
               </Suspense>
             }
           />
+          {/* Feedback was removed for supervisors. The redirect catches a direct URL
+              or a stale bookmark instead of falling through to the 404 page. */}
           <Route
             path="/app/supervisor/feedback"
-            element={
-              <Suspense fallback={<LoadingState />}>
-                <SupervisorFeedbackPage />
-              </Suspense>
-            }
+            element={<Navigate to="/app/supervisor/dashboard" replace />}
           />
           <Route
             path="/app/supervisor/scheduling"

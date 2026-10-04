@@ -1,4 +1,9 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+// A relative base keeps requests same-origin: Vite proxies "/api" to Express in
+// dev, and Express serves the built client itself in production. Pointing this
+// at an absolute http://localhost:5000 makes every call cross-origin, which
+// means a preflight on each one and a hard failure if any response is missing
+// an Access-Control-Allow-Origin header.
+const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
 async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
@@ -150,6 +155,22 @@ export const meetingApi = {
     }),
 };
 
+export const messageApi = {
+  // The server works out which counterpart the caller is allowed to reach, so
+  // the id here is only ever a hint about which thread to open.
+  list: (withUserId) => request(`/messages?with=${encodeURIComponent(withUserId)}`),
+  send: (payload) =>
+    request("/messages", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  markRead: (withUserId) =>
+    request("/messages/read", {
+      method: "POST",
+      body: JSON.stringify({ with: withUserId }),
+    }),
+};
+
 export const chapterApi = {
   // Students get their own chapters; supervisors pass the student they are reviewing.
   list: (studentId) =>
@@ -188,4 +209,47 @@ export const chapterApi = {
   // fetches this itself and turns the response into an object URL.
   documentUrl: (chapterId) => `${API_BASE_URL}/chapters/${chapterId}/document`,
   authHeaders: () => getAuthHeaders(),
+};
+
+export const defenceApi = {
+  getSchedule: () => request("/defence-schedule"),
+  saveSchedule: (payload) =>
+    request("/defence-schedule", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  // The server decides what the caller may see: a coordinator gets every result, a
+  // supervisor only their assigned students, and a student only their own row —
+  // and only once it has been published.
+  listResults: () => request("/defence-results"),
+  submitSupervisorScore: (studentId, payload) =>
+    request(`/defence-results/${studentId}/supervisor-score`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  recordDefenceScore: (studentId, defenceScore) =>
+    request(`/defence-results/${studentId}/defence-score`, {
+      method: "POST",
+      body: JSON.stringify({ defenceScore }),
+    }),
+  publishResult: (studentId) =>
+    request(`/defence-results/${studentId}/publish`, { method: "POST" }),
+  audit: (studentId) => request(`/defence-results/${studentId}/audit`),
+};
+
+export const checklistApi = {
+  // Every checklist route is scoped to the caller on the server, so no student id
+  // is ever sent from here.
+  list: () => request("/checklist"),
+  create: (payload) =>
+    request("/checklist", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  update: (itemId, changes) =>
+    request(`/checklist/${itemId}`, {
+      method: "POST",
+      body: JSON.stringify(changes),
+    }),
+  remove: (itemId) => request(`/checklist/${itemId}/delete`, { method: "POST" }),
 };

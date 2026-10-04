@@ -9,4 +9,16 @@ export default defineConfig({
     babel({ presets: [reactCompilerPreset()] }),
     tailwindcss(),
   ],
+  server: {
+    // The client calls the API at a relative "/api" path, so in dev the request
+    // stays on the Vite origin and is proxied to Express. That keeps it
+    // same-origin, which means no CORS preflight and no way for a missing
+    // Access-Control-Allow-Origin header to block document loading.
+    proxy: {
+      "/api": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
+    },
+  },
 });

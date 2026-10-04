@@ -145,9 +145,14 @@ alter table public.projects add column if not exists "finalSubmittedAt" timestam
 -- Chapters run strictly in sequence: chapter N only opens once N-1 is approved.
 -- The lock itself is never stored — it is derived from the previous chapter's
 -- status on every read, so it cannot drift out of sync.
-drop table if exists public.chapters cascade;
-
-create table public.chapters (
+--
+-- This used to be dropped and recreated on every run, which is destructive in two
+-- ways: it deletes every chapter students have written, and the cascade takes the
+-- foreign keys from chapter_comments and reviews with it. Re-adding the reviews
+-- key then fails (23503), because the recreated chapters table is empty while
+-- reviews still points at the old chapter ids. Created if missing, like every
+-- other table in this file.
+create table if not exists public.chapters (
   id uuid primary key default gen_random_uuid(),
   "projectId" uuid not null references public.projects(id) on delete cascade,
   "studentId" uuid not null references public.users(id) on delete cascade,
@@ -180,6 +185,13 @@ create table if not exists public.chapter_comments (
   "createdAt" timestamptz not null default now(),
   "updatedAt" timestamptz not null default now()
 );
+
+-- Restore the foreign key for anyone whose database was created by the version
+-- above that dropped chapters: the cascade removed this constraint and only the
+-- reviews one was being put back.
+alter table public.chapter_comments drop constraint if exists chapter_comments_chapterid_fkey;
+alter table public.chapter_comments add constraint chapter_comments_chapterid_fkey
+  foreign key ("chapterId") references public.chapters(id) on delete cascade;
 
 create index if not exists chapter_comments_chapter_idx
   on public.chapter_comments ("chapterId", "createdAt");
@@ -233,8 +245,10 @@ create table if not exists public.reviews (
   "reviewedAt" timestamptz
 );
 
--- chapters is dropped and recreated above, which takes this foreign key with it.
--- Restore it so reviews keeps pointing at the recreated table.
+-- Put the foreign key back for anyone whose database was created by the version
+-- above that dropped chapters, which took this constraint with it. Harmless when
+-- it already exists: it is dropped and re-added against a chapters table that now
+-- keeps its rows, so the re-validation passes.
 alter table public.reviews drop constraint if exists reviews_chapterid_fkey;
 alter table public.reviews add constraint reviews_chapterid_fkey
   foreign key ("chapterId") references public.chapters(id) on delete set null;
@@ -279,3 +293,94 @@ create index if not exists meetings_participants_idx on public.meetings ("studen
 create index if not exists reviews_supervisor_idx on public.reviews ("supervisorId", status);
 create index if not exists defenses_student_idx on public.defenses ("studentId");
 create index if not exists messages_participants_idx on public.messages ("senderId", "recipientId", "createdAt" desc);
+
+-- Project defence day, final scores, and the student's own preparation checklist.
+
+-- The defence day is one shared event, so the current schedule is simply the most
+-- recent row: an edit records a new version rather than overwriting the day that
+-- students and supervisors were already notified about.
+create table if not exists public.defence_schedules (
+  id uuid primary key default gen_random_uuid(),
+  title text not null default 'Project defence',
+  "scheduledDate" date not null,
+  "startTime" text not null,
+  venue text not null,
+  instructions text,
+  "createdBy" uuid references public.users(id) on delete set null,
+  "publishedAt" timestamptz not null default now(),
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists defence_schedules_published_idx
+  on public.defence_schedules ("publishedAt" desc);
+
+-- One collated result per student. The unique constraint on "studentId" is what
+-- makes a duplicate score submission impossible, not just unlikely.
+create table if not exists public.defence_results (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null unique references public.users(id) on delete cascade,
+  "projectId" uuid references public.projects(id) on delete set null,
+  "scheduleId" uuid references public.defence_schedules(id) on delete set null,
+  "supervisorId" uuid references public.users(id) on delete set null,
+  -- Supervisor's project report component.
+  "supervisorScore" numeric check ("supervisorScore" >= 0),
+  "supervisorMax" numeric not null default 100,
+  "supervisorBreakdown" jsonb,
+  "supervisorStatus" text not null default 'pending'
+    check ("supervisorStatus" in ('pending', 'draft', 'submitted')),
+  "supervisorSubmittedAt" timestamptz,
+  "supervisorUpdatedAt" timestamptz,
+  -- Defence component, recorded by the coordinator.
+  "defenceScore" numeric check ("defenceScore" >= 0),
+  "defenceMax" numeric not null default 100,
+  "defenceRecordedBy" uuid references public.users(id) on delete set null,
+  "defenceRecordedAt" timestamptz,
+  -- Collated outcome, filled in when the coordinator publishes.
+  "finalScore" numeric,
+  grade text,
+  status text not null default 'collecting'
+    check (status in ('collecting', 'ready', 'published')),
+  "publishedAt" timestamptz,
+  "publishedBy" uuid references public.users(id) on delete set null,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists defence_results_status_idx
+  on public.defence_results (status, "studentId");
+
+-- Append-only. Every score write records the field it touched and both values, so
+-- a change can be explained after the fact rather than only observed.
+create table if not exists public.defence_score_audit (
+  id uuid primary key default gen_random_uuid(),
+  "resultId" uuid references public.defence_results(id) on delete cascade,
+  "studentId" uuid references public.users(id) on delete cascade,
+  field text not null,
+  "oldValue" text,
+  "newValue" text,
+  action text not null,
+  "actorId" uuid references public.users(id) on delete set null,
+  "actorRole" text,
+  "createdAt" timestamptz not null default now()
+);
+
+create index if not exists defence_score_audit_student_idx
+  on public.defence_score_audit ("studentId", "createdAt" desc);
+
+-- Private to the student who wrote it. Every read and write is scoped by
+-- "studentId" on the server, so no route ever takes a student id from the client.
+create table if not exists public.defence_checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null references public.users(id) on delete cascade,
+  title text not null,
+  notes text,
+  done boolean not null default false,
+  "completedAt" timestamptz,
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists defence_checklist_student_idx
+  on public.defence_checklist_items ("studentId", "createdAt");
+

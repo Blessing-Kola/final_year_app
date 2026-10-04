@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
-import { supervisorApi } from "../../services/api";
+import { CalendarDays, Clock, MapPin, Save, Send } from "lucide-react";
+import { defenceApi, supervisorApi } from "../../services/api";
 import TopicReviewPanel from "../../components/TopicReviewPanel";
-import { StatusBadge } from "../../components/StatusBadge";
+import { Feedback, StatusBadge } from "../../components/StatusBadge";
+import { SCORE_MAX, describeResult, isWithinRange } from "../../lib/scores";
+import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../lib/defenceDay";
 import { usePortalData } from "../../hooks/usePortalData";
 
 export function CoordinatorDashboard() {
@@ -299,32 +302,432 @@ export function CoordinatorProposalsPage() {
   );
 }
 
+const EMPTY_DEFENCE_FORM = {
+  title: "Project defence",
+  scheduledDate: "",
+  startTime: "",
+  venue: "",
+  instructions: "",
+};
+
+const inputClass = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm";
+
+// The coordinator's one screen for the shared defence day. Publishing records a new
+// version rather than editing the existing one, so the day students were already
+// notified about is never silently rewritten.
 export function CoordinatorCalendarPage() {
-  const { data } = usePortalData();
-  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
-    (defense) => defense && defense.id,
-  );
+  const [schedule, setSchedule] = useState(null);
+  const [form, setForm] = useState(EMPTY_DEFENCE_FORM);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    defenceApi
+      .getSchedule()
+      .then((response) => {
+        if (!active) return;
+        const current = response.schedule ?? null;
+        setSchedule(current);
+        // Prefilled, so correcting the venue starts from what everyone can see.
+        if (current) {
+          setForm({
+            title: current.title || EMPTY_DEFENCE_FORM.title,
+            scheduledDate: current.scheduledDate || "",
+            startTime: current.startTime || "",
+            venue: current.venue || "",
+            instructions: current.instructions || "",
+          });
+        }
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message || "The defence day could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const updateField = (field) => (event) =>
+    setForm((current) => ({ ...current, [field]: event.target.value }));
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (saving) return;
+
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await defenceApi.saveSchedule({
+        ...form,
+        title: form.title.trim() || EMPTY_DEFENCE_FORM.title,
+      });
+      setSchedule(response.schedule);
+      setNotice(
+        schedule
+          ? "Defence day updated. Students and supervisors have been notified of the change."
+          : "Defence day published. Students and supervisors have been notified.",
+      );
+    } catch (saveError) {
+      setError(saveError.message || "The defence day could not be published.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">Calendar</h2>
-      <div className="mt-5 space-y-3">
-        {defenses.map((defense) => (
-          <div
-            key={defense.id}
-            className="rounded-xl border border-slate-200 p-4"
-          >
-            <p className="font-medium text-slate-900">
-              {defense.venue || "Defense"}
-            </p>
-            <p className="text-sm text-slate-500">
-              {defense.scheduledAt
-                ? new Date(defense.scheduledAt).toLocaleString()
-                : "Unscheduled"}
-            </p>
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Defence day</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          The defence day is shared by every student. Publishing notifies all students
+          with a project and all supervisors with assigned students.
+        </p>
+
+        {loading ? (
+          <p className="mt-4 text-sm text-slate-500">Loading the defence day…</p>
+        ) : schedule ? (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <p className="font-medium text-slate-900">{schedule.title}</p>
+              <span className="text-xs text-slate-500">
+                Published {formatTimestamp(schedule.publishedAt)}
+              </span>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm text-slate-600">
+              <span className="flex items-center gap-2">
+                <CalendarDays size={15} /> {formatDefenceDate(schedule.scheduledDate)}
+              </span>
+              <span className="flex items-center gap-2">
+                <Clock size={15} /> {formatDefenceTime(schedule.startTime)}
+              </span>
+              <span className="flex items-center gap-2">
+                <MapPin size={15} /> {schedule.venue}
+              </span>
+            </div>
+            {schedule.instructions ? (
+              <p className="mt-3 whitespace-pre-line text-sm text-slate-600">
+                {schedule.instructions}
+              </p>
+            ) : null}
           </div>
-        ))}
-        {!defenses.length ? (
-          <p className="text-sm text-slate-500">No defenses scheduled.</p>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+            No defence day has been published yet. Students and supervisors see the
+            defence date as soon as you publish it.
+          </div>
+        )}
+      </div>
+
+      <form
+        onSubmit={handleSubmit}
+        className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+      >
+        <h3 className="text-lg font-semibold text-slate-900">
+          {schedule ? "Publish a corrected schedule" : "Schedule the defence day"}
+        </h3>
+
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="defence-title">
+              Title
+            </label>
+            <input
+              id="defence-title"
+              value={form.title}
+              onChange={updateField("title")}
+              maxLength={120}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="defence-date">
+              Date
+            </label>
+            <input
+              id="defence-date"
+              type="date"
+              value={form.scheduledDate}
+              onChange={updateField("scheduledDate")}
+              required
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="defence-time">
+              Start time
+            </label>
+            <input
+              id="defence-time"
+              type="time"
+              value={form.startTime}
+              onChange={updateField("startTime")}
+              required
+              className={inputClass}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="defence-venue">
+              Venue
+            </label>
+            <input
+              id="defence-venue"
+              value={form.venue}
+              onChange={updateField("venue")}
+              placeholder="e.g. Faculty of Science, Lecture Theatre 2"
+              maxLength={200}
+              required
+              className={inputClass}
+            />
+          </div>
+          <div className="md:col-span-2">
+            <label
+              className="mb-1 block text-sm font-medium text-slate-700"
+              htmlFor="defence-instructions"
+            >
+              Instructions for students and supervisors
+            </label>
+            <textarea
+              id="defence-instructions"
+              value={form.instructions}
+              onChange={updateField("instructions")}
+              placeholder="What to bring, how long each defence lasts, panel arrangements…"
+              className={`${inputClass} min-h-[110px]`}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <Feedback tone="error">{error}</Feedback>
+          <Feedback tone="success">{notice}</Feedback>
+          <button
+            type="submit"
+            disabled={saving}
+            className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <Send size={16} />
+            {saving ? "Publishing…" : schedule ? "Update defence day" : "Publish defence day"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// One row per student. The final score and grade shown here are computed by the
+// same module the server publishes with, so what the coordinator reads is exactly
+// what gets stored.
+function ExaminationRow({ student, project, result, onResultChange }) {
+  const [draft, setDraft] = useState(
+    result.defenceScore === null || result.defenceScore === undefined
+      ? ""
+      : String(result.defenceScore),
+  );
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [audit, setAudit] = useState(null);
+
+  const published = result.status === "published";
+  const defenceMax = Number(result.defenceMax) || SCORE_MAX;
+
+  const preview = describeResult({
+    supervisorScore: result.supervisorScore,
+    supervisorMax: result.supervisorMax,
+    defenceScore: draft === "" ? null : draft,
+    defenceMax,
+  });
+
+  // Publishing is gated on what is stored, not on what is currently typed: an
+  // unsaved defence score has not reached the server, so it cannot be published.
+  const stored = describeResult(result);
+
+  // A published row shows what was actually stored, not a re-computation of it.
+  const finalScore = published ? result.finalScore : preview.finalScore;
+  const grade = published ? result.grade : preview.grade;
+
+  const draftUnchanged =
+    draft !== "" && Number(draft) === Number(result.defenceScore ?? NaN);
+
+  const saveDefence = async () => {
+    if (busy) return;
+    setBusy("defence");
+    setError("");
+    try {
+      const response = await defenceApi.recordDefenceScore(student.id, Number(draft));
+      onResultChange(response.result);
+    } catch (saveError) {
+      setError(saveError.message || "The defence score could not be saved.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const publish = async () => {
+    if (busy) return;
+    setBusy("publish");
+    setError("");
+    try {
+      const response = await defenceApi.publishResult(student.id);
+      onResultChange(response.result);
+    } catch (publishError) {
+      setError(publishError.message || "The result could not be published.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const toggleAudit = async () => {
+    if (auditOpen) {
+      setAuditOpen(false);
+      return;
+    }
+    setAuditOpen(true);
+    if (audit) return;
+
+    try {
+      const response = await defenceApi.audit(student.id);
+      setAudit(Array.isArray(response.entries) ? response.entries : []);
+    } catch (auditError) {
+      setError(auditError.message || "The audit trail could not be loaded.");
+      setAuditOpen(false);
+    }
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-medium text-slate-900">{student.name || "Student"}</p>
+          <p className="text-sm text-slate-500">
+            {student.studentId ? `${student.studentId} • ` : ""}
+            {project?.title || "Project"}
+          </p>
+        </div>
+        <StatusBadge status={published ? "published" : result.status} fallback="Collecting" />
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border border-slate-200 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">
+            Supervisor score (50%)
+          </p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {result.supervisorScore === null || result.supervisorScore === undefined
+              ? "—"
+              : `${result.supervisorScore} / ${Number(result.supervisorMax) || SCORE_MAX}`}
+          </p>
+          <div className="mt-2">
+            <StatusBadge status={result.supervisorStatus} fallback="Not submitted" />
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 p-3">
+          <label
+            className="text-xs uppercase tracking-wide text-slate-500"
+            htmlFor={`defence-score-${student.id}`}
+          >
+            Defence score (50%)
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id={`defence-score-${student.id}`}
+              type="number"
+              min="0"
+              max={defenceMax}
+              step="0.01"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              disabled={published}
+              placeholder="—"
+              className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50 disabled:text-slate-500"
+            />
+            <span className="text-sm text-slate-500">/ {defenceMax}</span>
+          </div>
+          <button
+            type="button"
+            onClick={saveDefence}
+            disabled={published || busy !== "" || draft === "" || draftUnchanged || !isWithinRange(draft, defenceMax)}
+            className="mt-2 flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save size={15} />
+            {busy === "defence" ? "Saving…" : "Save"}
+          </button>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Final score</p>
+          <p className="mt-1 text-lg font-semibold text-slate-900">
+            {finalScore === null || finalScore === undefined ? "—" : finalScore}
+          </p>
+          <p className="text-sm text-slate-500">{grade ? `Grade ${grade}` : "Not graded yet"}</p>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 p-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Result</p>
+          {published ? (
+            <p className="mt-1 text-sm text-emerald-700">
+              Published {formatTimestamp(result.publishedAt)}
+            </p>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={publish}
+                disabled={!stored.ready || busy !== ""}
+                className="mt-1 flex items-center gap-2 rounded-xl bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send size={15} />
+                {busy === "publish" ? "Publishing…" : "Publish"}
+              </button>
+              {stored.ready ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Both components are in. Publishing is final.
+                </p>
+              ) : (
+                <p className="mt-1 text-xs text-slate-500">
+                  Waiting for the {stored.missing.join(" and ")}.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-3">
+        <Feedback tone="error">{error}</Feedback>
+        <button
+          type="button"
+          onClick={toggleAudit}
+          className="text-sm font-medium text-indigo-600"
+        >
+          {auditOpen ? "Hide" : "View"} audit trail
+        </button>
+
+        {auditOpen ? (
+          audit && audit.length ? (
+            <ul className="space-y-1 rounded-xl bg-slate-50 p-3 text-sm text-slate-600">
+              {audit.map((entry) => (
+                <li key={entry.id}>
+                  <span className="font-medium capitalize">{entry.action}</span>{" "}
+                  {entry.field}
+                  {entry.oldValue ? ` from ${entry.oldValue}` : ""} to {entry.newValue}
+                  {entry.actorRole ? ` — ${entry.actorRole}` : ""},{" "}
+                  {formatTimestamp(entry.createdAt)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">Nothing recorded for this student yet.</p>
+          )
         ) : null}
       </div>
     </div>
@@ -333,28 +736,113 @@ export function CoordinatorCalendarPage() {
 
 export function CoordinatorExaminationsPage() {
   const { data } = usePortalData();
-  const defenses = (Array.isArray(data?.defenses) ? data.defenses : []).filter(
-    (defense) => defense && defense.id,
+  const [results, setResults] = useState([]);
+  const [schedule, setSchedule] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    defenceApi
+      .listResults()
+      .then((response) => {
+        if (!active) return;
+        setResults(Array.isArray(response.results) ? response.results : []);
+        setSchedule(response.schedule ?? null);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message || "The examination list could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const students = Array.isArray(data?.students) ? data.students : [];
+  const projects = Array.isArray(data?.projects) ? data.projects : [];
+  const studentById = new Map(students.filter((s) => s?.id).map((s) => [s.id, s]));
+  const projectByStudent = new Map(
+    projects.filter((p) => p?.studentId).map((p) => [p.studentId, p]),
   );
+
+  const onResultChange = (updated) =>
+    setResults((current) => current.map((row) => (row.studentId === updated.studentId ? updated : row)));
+
+  const rows = results
+    .map((result) => ({
+      result,
+      student: studentById.get(result.studentId) ?? { id: result.studentId, name: "Student" },
+      project: projectByStudent.get(result.studentId) ?? null,
+    }))
+    .sort((a, b) => String(a.student.name || "").localeCompare(String(b.student.name || "")));
+
+  const readyCount = rows.filter((row) => describeResult(row.result).ready && row.result.status !== "published").length;
+  const publishedCount = rows.filter((row) => row.result.status === "published").length;
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">Examinations</h2>
-      <div className="mt-5 space-y-3">
-        {defenses.map((defense) => (
-          <div
-            key={defense.id}
-            className="rounded-xl border border-slate-200 p-4"
-          >
-            <p className="font-medium text-slate-900">{defense.status}</p>
-            <p className="text-sm text-slate-500">
-              {defense.venue || "Venue not set"}
-            </p>
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Examinations</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Final score = 50% supervisor project report + 50% defence. A result can only
+          be published once both components are in.
+        </p>
+
+        {schedule ? (
+          <p className="mt-3 text-sm text-slate-600">
+            {schedule.title}: {formatDefenceDate(schedule.scheduledDate)} at{" "}
+            {formatDefenceTime(schedule.startTime)}, {schedule.venue}
+          </p>
+        ) : (
+          <p className="mt-3 text-sm text-amber-700">
+            No defence day has been published yet. Publish one from the Calendar page to
+            open score entry.
+          </p>
+        )}
+
+        {rows.length ? (
+          <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+            <span className="rounded-full bg-slate-100 px-3 py-1">
+              {rows.length} student{rows.length === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">
+              {readyCount} ready to publish
+            </span>
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-emerald-700">
+              {publishedCount} published
+            </span>
           </div>
-        ))}
-        {!defenses.length ? (
-          <p className="text-sm text-slate-500">No examination panels yet.</p>
         ) : null}
       </div>
+
+      <Feedback tone="error">{error}</Feedback>
+
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+          Loading results…
+        </div>
+      ) : rows.length ? (
+        <div className="space-y-3">
+          {rows.map(({ result, student, project }) => (
+            <ExaminationRow
+              key={result.id}
+              student={student}
+              project={project}
+              result={result}
+              onResultChange={onResultChange}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+          No students have a project to be examined yet.
+        </div>
+      )}
     </div>
   );
 }

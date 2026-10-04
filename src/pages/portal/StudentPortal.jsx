@@ -12,59 +12,37 @@ import {
 } from "lucide-react";
 import {
   activitiesApi,
+  defenceApi,
   documentsApi,
   proposalApi,
   supervisorApi,
   topicApi,
 } from "../../services/api";
 import { Feedback, StatusBadge } from "../../components/StatusBadge";
+import MessageThread from "../../components/MessageThread";
+import DefenceChecklist from "../../components/DefenceChecklist";
+import DefenceDayCard from "../../components/DefenceDayCard";
 import { StudentMeetingRequests } from "../../components/MeetingRequests";
 import StudentChapters from "../../components/StudentChapters";
+import { SCORE_MAX } from "../../lib/scores";
+import { PROJECT_TIMELINE, readStageProgress } from "../../lib/projectStage";
+import { formatDefenceDate, formatDefenceTime, formatTimestamp } from "../../lib/defenceDay";
 import { usePortalData } from "../../hooks/usePortalData";
+import { useDefenceSchedule } from "../../hooks/useDefenceSchedule";
 import { useAuth } from "../../context/useAuth";
 
-const timeline = [
-  "Proposal",
-  "Supervisor assigned",
-  "Chapter writing",
-  "Chapter review",
-  "Defense",
-  "Final submission",
-];
-
-// Progress is spread evenly across the stages, so each stage fills its own slice.
-// Shared by every portal view that draws the timeline, so they always agree.
-function getStageProgress(project) {
-  const progress = project?.progress ?? 0;
-  const stepSize = 100 / timeline.length;
-  const completedSteps = project ? Math.floor(progress / stepSize) : 0;
-  const currentIndex =
-    project && completedSteps < timeline.length ? completedSteps : -1;
-  const currentFill =
-    currentIndex === -1
-      ? 0
-      : Math.min(
-          100,
-          Math.max(0, ((progress - completedSteps * stepSize) / stepSize) * 100),
-        );
-
-  return {
-    progress,
-    completedSteps,
-    currentIndex,
-    currentFill,
-    currentStage: currentIndex === -1 ? null : timeline[currentIndex],
-    nextStage:
-      currentIndex >= 0 && currentIndex + 1 < timeline.length
-        ? timeline[currentIndex + 1]
-        : null,
-  };
-}
+// Both live in src/lib/projectStage.js, beside the server's derivation of the same
+// stage, so the timeline a student sees and the one the supervisor sees are drawn
+// from one list. The local names are kept because the rest of this file reads better
+// with them.
+const timeline = PROJECT_TIMELINE;
+const getStageProgress = readStageProgress;
 
 export function StudentDashboard() {
   const [activities, setActivities] = useState([]);
   const [supervisorRequest, setSupervisorRequest] = useState(null);
   const { data } = usePortalData();
+  const { schedule: defenceDay, loading: defenceLoading, error: defenceError } = useDefenceSchedule();
   const project =
     data?.project && typeof data.project === "object" ? data.project : null;
   const chapters = Array.isArray(data?.chapters) ? data.chapters : [];
@@ -140,6 +118,8 @@ export function StudentDashboard() {
           </Link>
         </div>
       </div>
+
+      <DefenceDayCard schedule={defenceDay} loading={defenceLoading} error={defenceError} />
 
       <div className="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
         <div className="space-y-6">
@@ -821,10 +801,9 @@ export function StudentDocumentsPage() {
 
 export function StudentCommunicationPage() {
   const { data } = usePortalData();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("messages");
-  const messages = Array.isArray(data?.messages) ? data.messages : [];
   const supervisor = data?.supervisorRequest?.supervisor ?? null;
-  const supervisorName = supervisor?.name || "Supervisor";
 
   return (
     <div className="space-y-6">
@@ -850,60 +829,15 @@ export function StudentCommunicationPage() {
       </div>
 
       {activeTab === "messages" ? (
-        <div className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">Threads</h2>
-            <div className="mt-4 space-y-2">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className="rounded-xl border border-slate-200 p-3"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-medium text-slate-900">Message</p>
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500">{message.body}</p>
-                </div>
-              ))}
-              {!messages.length ? (
-                <p className="text-sm text-slate-500">No messages yet.</p>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <div>
-                <h2 className="font-semibold text-slate-900">{supervisorName}</h2>
-                <p className="text-sm text-slate-500">Supervisor</p>
-              </div>
-            </div>
-            <div className="mt-4 space-y-3">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`max-w-[80%] rounded-2xl p-3 text-sm ${message.senderId === message.recipientId ? "bg-slate-100 text-slate-700" : "ml-auto bg-indigo-600 text-white"}`}
-                >
-                  {message.body}
-                </div>
-              ))}
-              {!messages.length ? (
-                <p className="text-sm text-slate-500">
-                  Start a conversation with your supervisor.
-                </p>
-              ) : null}
-            </div>
-            <div className="mt-4 flex items-end gap-2 rounded-2xl border border-slate-200 p-3">
-              <textarea
-                className="min-h-[80px] flex-1 resize-none border-0 outline-none"
-                placeholder="Write a message"
-              />
-              <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
+        // A student has exactly one counterpart, so the thread is the whole page —
+        // a one-entry conversation list would add nothing.
+        <MessageThread
+          partnerId={supervisor?.id}
+          partnerName={supervisor?.name}
+          partnerSubtitle="Supervisor"
+          currentUserId={user?.id}
+          emptyHint="No supervisor yet. Once a supervisor accepts your request you can message them here."
+        />
       ) : (
         <StudentMeetingRequests supervisor={supervisor} />
       )}
@@ -912,100 +846,105 @@ export function StudentCommunicationPage() {
 }
 
 export function StudentDefensePage() {
-  const { data } = usePortalData();
-  const defense = data?.defenses?.[0];
-  const defenseDate = defense?.scheduledAt
-    ? new Date(defense.scheduledAt)
-    : null;
+  const { schedule, loading: scheduleLoading, error: scheduleError } = useDefenceSchedule();
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    defenceApi
+      .listResults()
+      .then((response) => {
+        if (!active) return;
+        // The server only returns a row once it has been published, so anything
+        // here is safe to show.
+        setResult(Array.isArray(response.results) ? response.results[0] ?? null : null);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message || "Your result could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-medium text-indigo-600">
-              Defense status
-            </p>
-            <h2 className="text-xl font-semibold text-slate-900">
-              {defenseDate
-                ? `Your defense is on ${defenseDate.toLocaleDateString()}`
-                : "Your defense has not been scheduled"}
-            </h2>
-          </div>
-          <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
-            RSVP
-          </button>
-        </div>
+        <p className="text-sm font-medium text-indigo-600">Defence status</p>
+        <h2 className="mt-1 text-xl font-semibold text-slate-900">
+          {scheduleLoading
+            ? "Loading your defence details…"
+            : schedule
+              ? `Your defence is on ${formatDefenceDate(schedule.scheduledDate)}`
+              : "Your defence has not been scheduled yet"}
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          {schedule
+            ? `${formatDefenceTime(schedule.startTime)} at ${schedule.venue}. Your supervisor and the coordinator see the same schedule.`
+            : "You will be notified as soon as the coordinator publishes the defence day."}
+        </p>
       </div>
-      <div className="grid gap-6 xl:grid-cols-[1fr_0.8fr]">
+
+      <DefenceDayCard schedule={schedule} loading={scheduleLoading} error={scheduleError} />
+
+      <div className="grid gap-6 xl:grid-cols-2">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Defense details
-          </h2>
-          <div className="mt-4 grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
-            <div>
-              <span className="font-medium text-slate-900">Date</span>
-              <p>
-                {defenseDate ? defenseDate.toLocaleDateString() : "Not set"}
+          <h2 className="text-lg font-semibold text-slate-900">Final result</h2>
+
+          <Feedback tone="error">{error}</Feedback>
+
+          {loading ? (
+            <p className="mt-4 text-sm text-slate-500">Loading your result…</p>
+          ) : result ? (
+            <div className="mt-4 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">
+                    Supervisor score (50%)
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">
+                    {result.supervisorScore} / {Number(result.supervisorMax) || SCORE_MAX}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-slate-50 p-3">
+                  <p className="text-xs uppercase tracking-wide text-slate-500">
+                    Defence score (50%)
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-slate-900">
+                    {result.defenceScore} / {Number(result.defenceMax) || SCORE_MAX}
+                  </p>
+                </div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <p className="text-xs uppercase tracking-wide text-emerald-700">
+                  Final score
+                </p>
+                <p className="mt-1 text-3xl font-semibold text-emerald-900">
+                  {result.finalScore}
+                </p>
+                <p className="mt-1 text-sm text-emerald-800">Grade {result.grade}</p>
+              </div>
+              <p className="text-xs text-slate-500">
+                Published {formatTimestamp(result.publishedAt)}
               </p>
             </div>
-            <div>
-              <span className="font-medium text-slate-900">Time</span>
-              <p>
-                {defenseDate
-                  ? defenseDate.toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })
-                  : "Not set"}
-              </p>
+          ) : (
+            <div className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+              Your final score appears here once the coordinator has collated the
+              supervisor and defence scores and published the result. Until then it is
+              not visible to you.
             </div>
-            <div>
-              <span className="font-medium text-slate-900">Venue</span>
-              <p>{defense?.venue || "Not set"}</p>
-            </div>
-            <div>
-              <span className="font-medium text-slate-900">Format</span>
-              <p>{defense?.format || "Not set"}</p>
-            </div>
-          </div>
-          <div className="mt-5">
-            <h3 className="font-semibold text-slate-900">Panel members</h3>
-            <div className="mt-3 space-y-3">
-              <p className="text-sm text-slate-500">
-                {defense
-                  ? "Panel details will appear when members are assigned."
-                  : "No panel has been assigned yet."}
-              </p>
-            </div>
-          </div>
+          )}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">
-            Pre-defense checklist
-          </h2>
-          <div className="mt-4 space-y-3">
-            {[
-              { label: "Final document submitted", checked: true },
-              { label: "Slides ready", checked: false },
-              { label: "Attendance confirmed", checked: true },
-              { label: "Panel notified", checked: true },
-            ].map((item) => (
-              <label
-                key={item.label}
-                className="flex items-center gap-3 rounded-xl border border-slate-200 px-3 py-2"
-              >
-                <input
-                  type="checkbox"
-                  defaultChecked={item.checked}
-                  className="h-4 w-4 rounded border-slate-300 text-indigo-600"
-                />
-                <span className="text-sm text-slate-700">{item.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
+        <DefenceChecklist />
       </div>
     </div>
   );

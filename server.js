@@ -9,6 +9,21 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { supabase } from "./src/services/supabaseServer.js";
+import { mergeConversation } from "./src/lib/messages.js";
+import {
+    SCORE_MAX,
+    calculateReportScore,
+    describeResult,
+    isWithinRange,
+} from "./src/lib/scores.js";
+import {
+    PROJECT_STAGE_INDEX,
+    PROJECT_STATUS,
+    PROJECT_TIMELINE,
+    deriveProjectStage,
+    isSubmittedProposal,
+    progressForStage,
+} from "./src/lib/projectStage.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -29,7 +44,26 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-app.use(cors({ origin: process.env.CLIENT_URL || "http://localhost:5173", credentials: true }));
+// Dev serves the client from Vite on a different port, so the API is reached
+// cross-origin there. Accept the configured client URL plus any loopback origin
+// (localhost or 127.0.0.1, whichever port Vite settled on) and reject the rest.
+// This must stay ahead of the routes below: anything registered before it would
+// answer without these headers and the browser would block the response.
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+const LOOPBACK_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+app.use(
+    cors({
+        origin: (origin, callback) => {
+            // No Origin header: same-origin request, curl, or a server-to-server call.
+            if (!origin || origin === CLIENT_URL || LOOPBACK_ORIGIN.test(origin)) {
+                return callback(null, true);
+            }
+            return callback(null, false);
+        },
+        credentials: true,
+    }),
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -385,6 +419,44 @@ const getAssignedSupervisorId = async (studentId) => {
     return data?.supervisorId ?? null;
 };
 
+const MAX_MESSAGE_LENGTH = 4000;
+
+// Messaging is restricted to the pair the assignment table already links: a
+// student may only reach their supervisor, a supervisor only their assigned
+// students. The partner id is re-checked here rather than trusted, so a forged
+// recipientId cannot address an unrelated account.
+const resolveMessagePartner = async (user, partnerId) => {
+    if (!partnerId) {
+        return { denied: { status: 400, message: "Choose who the message is for" } };
+    }
+
+    if (user.role === "student") {
+        const supervisorId = await getAssignedSupervisorId(user.id);
+        if (!supervisorId) {
+            return {
+                denied: {
+                    status: 403,
+                    message: "You need an assigned supervisor before you can send messages",
+                },
+            };
+        }
+        if (partnerId !== supervisorId) {
+            return { denied: { status: 403, message: "You can only message your assigned supervisor" } };
+        }
+        return { partnerId: supervisorId };
+    }
+
+    if (user.role === "supervisor") {
+        const allowed = await canReviewStudent(user, partnerId);
+        if (!allowed) {
+            return { denied: { status: 403, message: "This student is not assigned to you" } };
+        }
+        return { partnerId };
+    }
+
+    return { denied: { status: 403, message: "Insufficient permissions" } };
+};
+
 const formatMeetingDate = (value) => {
     const parsed = new Date(`${value}T00:00:00`);
     if (Number.isNaN(parsed.getTime())) return String(value ?? "");
@@ -401,6 +473,143 @@ const formatMeetingTime = (value) => {
 
 const describeMeetingWhen = (request) =>
     `${formatMeetingDate(request.date)} at ${formatMeetingTime(request.time)}`;
+
+// --- Defence day and score helpers -------------------------------------------
+
+const MAX_CHECKLIST_TITLE = 200;
+const MAX_CHECKLIST_NOTES = 1000;
+
+const describeDefenceWhen = (schedule) =>
+    schedule
+        ? `${formatMeetingDate(schedule.scheduledDate)} at ${formatMeetingTime(schedule.startTime)}`
+        : "";
+
+// The defence day is one event, so the current schedule is the latest version of
+// it. Nothing is ever edited in place: publishing again records a new version.
+const getCurrentDefenceSchedule = async () => {
+    const rows = await fetchRows("defence_schedules", (query) =>
+        query.order("publishedAt", { ascending: false }).limit(1),
+    );
+    return rows[0] ?? null;
+};
+
+const findDefenceResult = async (studentId) => {
+    const { data, error } = await supabase
+        .from("defence_results")
+        .select("*")
+        .eq("studentId", studentId)
+        .maybeSingle();
+    if (error) throw error;
+    return data ?? null;
+};
+
+// One result row per student with a project, so the coordinator's score table
+// needs no join to list everyone. Idempotent, and called both when a schedule is
+// published and whenever a score page loads — the same self-healing read the
+// student portal already does for a half-started project.
+const ensureDefenceResults = async (schedule) => {
+    if (!schedule) return fetchRows("defence_results");
+
+    const [projects, existing, assignments] = await Promise.all([
+        fetchRows("projects"),
+        fetchRows("defence_results"),
+        fetchRows("supervisor_requests", (query) => query.eq("status", "assigned")),
+    ]);
+
+    const supervisorByStudent = new Map(
+        assignments.map((assignment) => [assignment.studentId, assignment.supervisorId]),
+    );
+    const byStudent = new Map(existing.map((row) => [row.studentId, row]));
+    const now = new Date().toISOString();
+
+    const toInsert = projects
+        .filter((project) => project?.studentId && !byStudent.has(project.studentId))
+        .map((project) => ({
+            studentId: project.studentId,
+            projectId: project.id,
+            scheduleId: schedule.id,
+            supervisorId: supervisorByStudent.get(project.studentId) ?? null,
+            supervisorMax: SCORE_MAX,
+            defenceMax: SCORE_MAX,
+            supervisorStatus: "pending",
+            status: "collecting",
+            createdAt: now,
+            updatedAt: now,
+        }));
+
+    if (toInsert.length) {
+        const { error } = await supabase.from("defence_results").insert(toInsert);
+        // 23505 is a unique violation on "studentId": another request seeded the
+        // same student between the read above and this insert. The row exists
+        // either way, so this is not a failure.
+        if (error && error.code !== "23505") throw error;
+    }
+
+    // Carry an ungraded result over to the newly published day. A published
+    // result is history and is deliberately left pointing at its own schedule.
+    const stale = existing.filter(
+        (row) => row.status !== "published" && row.scheduleId !== schedule.id,
+    );
+    if (stale.length) {
+        await supabase
+            .from("defence_results")
+            .update({ scheduleId: schedule.id, updatedAt: now })
+            .in("id", stale.map((row) => row.id));
+    }
+
+    return fetchRows("defence_results");
+};
+
+// Append-only. Callers pass only the fields that actually changed, so the trail
+// reads as a sequence of edits rather than a series of snapshots.
+const recordScoreAudit = async (entries) => {
+    if (!entries.length) return;
+
+    const { error } = await supabase.from("defence_score_audit").insert(entries);
+    if (error) throw error;
+};
+
+const notifyCoordinators = async (activity) => {
+    const coordinators = await fetchRows("users", (query) => query.eq("role", "coordinator"));
+    if (!coordinators.length) return;
+
+    await supabase.from("activities").insert(
+        coordinators.map((coordinator) => ({ ...activity, userId: coordinator.id })),
+    );
+};
+
+// Everyone who has a stake in the defence day: students with a project, and
+// supervisors with at least one assigned student.
+const notifyDefenceAudience = async (schedule, { updated = false } = {}) => {
+    const [projects, assignments] = await Promise.all([
+        fetchRows("projects"),
+        fetchRows("supervisor_requests", (query) => query.eq("status", "assigned")),
+    ]);
+
+    const recipients = new Set(projects.map((project) => project.studentId).filter(Boolean));
+    assignments.forEach((assignment) => {
+        if (assignment.supervisorId) recipients.add(assignment.supervisorId);
+    });
+    if (!recipients.size) return;
+
+    const activity = {
+        type: updated ? "defence_updated" : "defence_scheduled",
+        title: updated ? "Defence schedule updated" : "Defence day scheduled",
+        body: `${describeDefenceWhen(schedule)} — ${schedule.venue}.`,
+        tone: "indigo",
+    };
+
+    await supabase.from("activities").insert(
+        [...recipients].map((userId) => ({ ...activity, userId })),
+    );
+};
+
+// Both score writes share the same guard: a published result is final, and the
+// caller is told why rather than silently ignored.
+const refuseIfPublished = (result) =>
+    result.status === "published"
+        ? { status: 409, message: "This result has been published and can no longer be changed" }
+        : null;
 
 const findMeetingRequest = async (requestId) => {
     const { data, error } = await supabase
@@ -444,17 +653,6 @@ const CHAPTER_TITLES = [
 
 // Only a chapter the student has actually handed in can be reviewed.
 const REVIEWABLE_CHAPTER_STATUSES = new Set(["submitted", "under_review"]);
-
-// Submitting a proposal is what creates a student's project and opens Chapter 1.
-// The dashboard timeline has six evenly spread stages, so two completed stages
-// (Proposal, Supervisor assigned) put "Chapter writing" in progress just past 2/6.
-// Kept in step with `timeline` in src/pages/portal/StudentPortal.jsx.
-const CHAPTER_ONE_STAGE = "Chapter 1 Started";
-const CHAPTER_ONE_STATUS = "chapter_1_started";
-const CHAPTER_ONE_PROGRESS = Math.round((100 / 6) * 2) + 1; // 34
-
-// Any of these means the student is past submission and entitled to Chapter 1.
-const SUBMITTED_PROPOSAL_STATUSES = new Set(["submitted", "under_review", "approved"]);
 
 const withChapterAvailability = (chapters) => {
     const ordered = [...chapters].sort((a, b) => a.chapterNumber - b.chapterNumber);
@@ -530,13 +728,40 @@ const ensureChaptersForStudent = async (studentId) => {
     return listChapters(project.id);
 };
 
+// Flips Chapter 1 from untouched to in progress. Guarded on the stored status, so a
+// resubmitted proposal, a second tab or the portal's self-heal cannot pull a chapter
+// that is already under way backwards. Returns whether this call was the one that
+// opened it, which is what tells the caller whether the project row still needs moving.
+const openChapterOne = async ({ chapterId, studentId }) => {
+    const now = new Date().toISOString();
+    const { data: started, error } = await supabase
+        .from("chapters")
+        .update({ status: "in_progress", updatedAt: now })
+        .eq("id", chapterId)
+        .eq("status", "not_started") // two concurrent submissions must not both win
+        .select()
+        .maybeSingle();
+    if (error) throw error;
+    if (!started) return false;
+
+    await safeSideEffect("chapter 1 started activity", () =>
+        createActivity({
+            userId: studentId,
+            type: "chapter_started",
+            title: "Chapter 1 started",
+            body: "Your proposal was submitted and Chapter 1 is now open. Upload your draft when you are ready.",
+            tone: "indigo",
+        }),
+    );
+
+    return true;
+};
+
 // Creates the student's project if it does not exist yet and opens Chapter 1.
 // Idempotent by design: a student may resubmit a proposal at any time, and a
 // resubmission must never pull an already-open chapter backwards.
 const startFirstChapter = async ({ studentId, title }) => {
-    // Nothing else in the app creates a project, so this may be the first one. It is
-    // created at the default stage/progress and advanced in the last step, so the
-    // stage only ever moves at the moment the chapter actually opens.
+    // Nothing else in the app creates a project, so this may be the first one.
     let project = await findStudentProject(studentId);
     if (!project) {
         const { data, error } = await supabase
@@ -550,43 +775,108 @@ const startFirstChapter = async ({ studentId, title }) => {
 
     const chapters = await ensureChaptersForStudent(studentId);
     const first = chapters.find((chapter) => chapter.chapterNumber === 1);
-    if (!first) return null;
+    if (!first || first.status !== "not_started") return null;
 
-    // Only a chapter nobody has touched is opened. Once it is in progress,
-    // submitted or approved, a resubmitted proposal leaves it exactly as it is.
-    if (first.status !== "not_started") return null;
+    if (!(await openChapterOne({ chapterId: first.id, studentId }))) return null;
 
-    const now = new Date().toISOString();
-    const { data: started, error: chapterError } = await supabase
-        .from("chapters")
-        .update({ status: "in_progress", updatedAt: now })
-        .eq("id", first.id)
-        .eq("status", "not_started") // two concurrent submissions must not both win
+    // The project row moves only once the chapter really opened, so the stage can
+    // never run ahead of the work. The value comes from the shared timeline, which
+    // is what the portal read would have derived anyway.
+    const index = PROJECT_STAGE_INDEX.chapterWriting;
+    const { data: updated, error: projectError } = await supabase
+        .from("projects")
+        .update({
+            stage: PROJECT_TIMELINE[index],
+            status: PROJECT_STATUS.chapterWriting,
+            progress: progressForStage(index),
+        })
+        .eq("id", project.id)
         .select()
         .maybeSingle();
-    if (chapterError) throw chapterError;
-    if (!started) return null;
-
-    // The timeline moves only once the chapter really opened, so the project stage
-    // can never run ahead of the work.
-    const { error: projectError } = await supabase
-        .from("projects")
-        .update({ stage: CHAPTER_ONE_STAGE, status: CHAPTER_ONE_STATUS, progress: CHAPTER_ONE_PROGRESS })
-        .eq("id", project.id);
     if (projectError) throw projectError;
 
-    await safeSideEffect("chapter 1 started activity", () =>
-        createActivity({
-            userId: studentId,
-            type: "chapter_started",
-            title: "Chapter 1 started",
-            body: "Your proposal was submitted and Chapter 1 is now open. Upload your draft when you are ready.",
-            tone: "indigo",
+    return updated ?? project;
+};
+
+// Re-derives a project's stage from the records themselves and stores the result, so
+// what a portal shows is what the data actually supports.
+//
+// This is the whole point of the timeline being derived: a value that fell behind can
+// only be corrected by a write, and tying that write to a read means a refresh is
+// enough to fix it. Callers run it inside their own try/catch — a project whose stage
+// could not be refreshed should still render with the value it already had.
+const syncProjectStage = async ({ project, chapters, proposal, supervisorAssigned = false }) => {
+    if (!project) return project;
+
+    const derived = deriveProjectStage({ project, chapters, proposal, supervisorAssigned });
+    if (!derived) return project;
+
+    const unchanged =
+        project.stage === derived.stage &&
+        project.status === derived.status &&
+        project.progress === derived.progress;
+    if (unchanged) return project;
+
+    const { data, error } = await supabase
+        .from("projects")
+        .update({ stage: derived.stage, status: derived.status, progress: derived.progress })
+        .eq("id", project.id)
+        .select()
+        .maybeSingle();
+    if (error) {
+        console.warn(`[portal] project stage persistence failed for ${project.id}: ${error.message}`);
+        return { ...project, ...derived };
+    }
+
+    // `.maybeSingle()` answers with no row if the project was deleted in between; the
+    // caller keeps the row it already had rather than being handed a null.
+    return (
+        data ?? {
+            ...project,
+            stage: derived.stage,
+            status: derived.status,
+            progress: derived.progress,
+        }
+    );
+};
+
+// An empty chapter list means the chapter read failed rather than that the student has
+// no chapters — `ensureChaptersForStudent` creates all five whenever the table is
+// readable. Deriving from nothing there would write a lower stage than the truth, so
+// the write-back is skipped and the stored value left alone.
+const hasChapterRows = (chapters) => Array.isArray(chapters) && chapters.length > 0;
+
+const syncProjectsForPortal = async ({ projects, chapters, proposals, assignedStudentIds }) =>
+    Promise.all(
+        projects.map(async (project) => {
+            const studentChapters = chapters.filter(
+                (chapter) => chapter.studentId === project.studentId,
+            );
+            if (!hasChapterRows(studentChapters)) return project;
+
+            const proposal =
+                proposals.find((entry) => entry.studentId === project.studentId) ?? null;
+            const supervisorAssigned = assignedStudentIds.has(project.studentId);
+
+            try {
+                return await syncProjectStage({
+                    project,
+                    chapters: studentChapters,
+                    proposal,
+                    supervisorAssigned,
+                });
+            } catch (error) {
+                console.warn(`[portal] stage for project ${project.id} unavailable: ${error.message}`);
+                const derived = deriveProjectStage({
+                    project,
+                    chapters: studentChapters,
+                    proposal,
+                    supervisorAssigned,
+                });
+                return derived ? { ...project, ...derived } : project;
+            }
         }),
     );
-
-    return project;
-};
 
 // Students who submitted a proposal before this workflow existed have no project
 // row, so nothing ever created their chapters. The portal read heals them with the
@@ -602,7 +892,7 @@ const healUnstartedStudent = async (studentId, project = null) => {
         .eq("studentId", studentId)
         .maybeSingle();
     if (error) throw error;
-    if (!proposal || !SUBMITTED_PROPOSAL_STATUSES.has(proposal.status)) return project;
+    if (!isSubmittedProposal(proposal)) return project;
 
     await startFirstChapter({ studentId, title: proposal.title });
     return (await findStudentProject(studentId)) ?? project;
@@ -670,24 +960,19 @@ const getPortalData = async (user) => {
         );
         let project = projects[0] ?? null;
 
-        // Self-heal: a student whose proposal predates this workflow gets their
-        // project and Chapter 1 on their next portal read rather than waiting for a
-        // resubmission. Healed before the reads below so the project and the chapters
-        // it unlocks come back in the same response. Degrades like the other portal
-        // reads so a missing proposals table cannot take the rest of the page down.
-        //
-        // `stage` stays at its 'proposal' default until the chapter actually opens, so
-        // it also catches a start that was interrupted halfway — a project created but
-        // left with Chapter 1 untouched. Those retry on every read until they land.
-        if (!project || project.stage === "proposal") {
+        // Self-heal: a student whose proposal predates this workflow has no project
+        // row at all, so nothing ever created one. Same path the proposal route uses,
+        // and it degrades like the other portal reads so a missing proposals table
+        // cannot take the rest of the page down.
+        if (!project) {
             try {
-                project = await healUnstartedStudent(user.id, project);
+                project = await healUnstartedStudent(user.id, null);
             } catch (error) {
-                console.warn(`[portal] chapter 1 self-heal unavailable: ${error.message}`);
+                console.warn(`[portal] project self-heal unavailable: ${error.message}`);
             }
         }
 
-        const [chapters, meetings, defenses, messages, supervisorRequest, topic, proposal] = await Promise.all([
+        const [loadedChapters, meetings, defenses, messages, supervisorRequest, topic, proposal] = await Promise.all([
             loadPortalChapters(user.id, project),
             fetchRows("meetings", (query) => query.eq("studentId", user.id).order("scheduledAt", { ascending: true })),
             fetchRows("defenses", (query) => query.eq("studentId", user.id).order("scheduledAt", { ascending: true })),
@@ -698,6 +983,38 @@ const getPortalData = async (user) => {
             getStudentTopicSafe(user.id),
             getStudentProposalSafe(user.id),
         ]);
+        let chapters = loadedChapters;
+
+        // Submitting a proposal is what opens Chapter 1. A start interrupted halfway
+        // leaves the project without it, and that used to be caught by the stage still
+        // reading 'proposal' — a signal that no longer exists now the stage is derived
+        // from the records. The chapter row says the same thing and cannot go stale, so
+        // it is what decides here. Retried on every read until it lands.
+        const chapterOne = chapters.find((chapter) => chapter.chapterNumber === 1);
+        if (project && chapterOne?.status === "not_started" && isSubmittedProposal(proposal)) {
+            try {
+                await openChapterOne({ chapterId: chapterOne.id, studentId: user.id });
+                chapters = await loadPortalChapters(user.id, project);
+            } catch (error) {
+                console.warn(`[portal] chapter 1 self-heal unavailable: ${error.message}`);
+            }
+        }
+
+        // Every read re-derives the stage from the records and stores the result, so a
+        // refresh always shows the stage the data supports rather than whichever write
+        // last happened to move it.
+        if (project && hasChapterRows(chapters)) {
+            try {
+                project = await syncProjectStage({
+                    project,
+                    chapters,
+                    proposal,
+                    supervisorAssigned: supervisorRequest?.status === "assigned",
+                });
+            } catch (error) {
+                console.warn(`[portal] project stage unavailable: ${error.message}`);
+            }
+        }
 
         return { role: user.role, project, topics, chapters, meetings, defenses, messages, topic, proposal, supervisorRequest: await getSupervisorRequestDetails(supervisorRequest) };
     }
@@ -711,7 +1028,7 @@ const getPortalData = async (user) => {
                 .map((assignment) => assignment.studentId)
                 .filter((studentId) => studentId !== null && studentId !== undefined && studentId !== ""),
         )];
-        const [projects, reviews, meetings, students, messages, studentTopics, proposals] = await Promise.all([
+        const [projects, reviews, meetings, students, messages, studentTopics, proposals, chapters] = await Promise.all([
             studentIds.length ? fetchRows("projects", (query) => query.in("studentId", studentIds)) : [],
             fetchRows("reviews", (query) => query.eq("supervisorId", user.id).order("submittedAt", { ascending: false })),
             fetchRows("meetings", (query) => query.eq("supervisorId", user.id).order("scheduledAt", { ascending: true })),
@@ -725,11 +1042,27 @@ const getPortalData = async (user) => {
             studentIds.length
                 ? fetchRowsSafe("proposals", (query) => query.in("studentId", studentIds).order("updatedAt", { ascending: false }))
                 : [],
+            studentIds.length
+                ? fetchRowsSafe("chapters", (query) => query.in("studentId", studentIds))
+                : [],
         ]);
+
+        // The supervisor sees the same derived stage the student does, so their lists
+        // are refreshed from the records before they are handed over. Every student
+        // here is on the list because their request is assigned, which is the only
+        // part of the derivation the rows themselves do not carry. A student whose
+        // stage could not be refreshed keeps the stored value rather than losing it.
+        const syncedProjects = await syncProjectsForPortal({
+            projects,
+            chapters,
+            proposals,
+            assignedStudentIds: new Set(studentIds),
+        });
+
         return {
             role: user.role,
             students: students.map(normalizeUser),
-            projects,
+            projects: syncedProjects,
             reviews,
             meetings,
             messages,
@@ -739,7 +1072,7 @@ const getPortalData = async (user) => {
         };
     }
 
-    const [students, supervisors, pendingRequests, projects, defenses, studentUsers, supervisorUsers, projectRows, defenseRows, topicRows, proposalRows] = await Promise.all([
+    const [students, supervisors, pendingRequests, projects, defenses, studentUsers, supervisorUsers, projectRows, defenseRows, topicRows, proposalRows, assignedRequests] = await Promise.all([
         fetchCount("users", (query) => query.eq("role", "student")),
         fetchCount("users", (query) => query.eq("role", "supervisor")),
         fetchCount("supervisor_requests", (query) => query.eq("status", "pending")),
@@ -751,13 +1084,24 @@ const getPortalData = async (user) => {
         fetchRows("defenses", (query) => query.order("scheduledAt", { ascending: true })),
         fetchRowsSafe("student_topics", (query) => query.order("submittedAt", { ascending: false })),
         fetchRowsSafe("proposals", (query) => query.order("updatedAt", { ascending: false })),
+        fetchRowsSafe("supervisor_requests", (query) => query.eq("status", "assigned")),
     ]);
+    const projectStudentIds = [...new Set(projectRows.map((project) => project.studentId))];
+    const chapterRows = projectStudentIds.length
+        ? await fetchRowsSafe("chapters", (query) => query.in("studentId", projectStudentIds))
+        : [];
+    const syncedProjectRows = await syncProjectsForPortal({
+        projects: projectRows,
+        chapters: chapterRows,
+        proposals: proposalRows,
+        assignedStudentIds: new Set(assignedRequests.map((request) => request.studentId)),
+    });
     return {
         role: user.role,
         stats: { students, supervisors, pendingRequests, projects, defenses },
         students: studentUsers.map(normalizeUser),
         supervisors: supervisorUsers.map(normalizeUser),
-        projects: projectRows,
+        projects: syncedProjectRows,
         defenses: defenseRows,
         topics,
         studentTopics: await Promise.all(topicRows.map(withStudent)),
@@ -1623,6 +1967,610 @@ app.post("/api/meeting-requests/:requestId/decline", authenticateToken, requireR
     respondToMeetingRequest(req, res, "declined"),
 );
 
+// --- Message routes ----------------------------------------------------------
+
+// One thread, oldest first. Read as two plain filtered queries rather than a
+// single nested or(and(...)) filter: the result is the same and a plain equality
+// filter is far harder to get subtly wrong.
+app.get("/api/messages", authenticateToken, async (req, res) => {
+    try {
+        const withId = typeof req.query.with === "string" ? req.query.with.trim() : "";
+        const { partnerId, denied } = await resolveMessagePartner(req.user, withId);
+        if (denied) {
+            return res.status(denied.status).json({ message: denied.message });
+        }
+
+        const [sent, received] = await Promise.all([
+            fetchRows("messages", (query) =>
+                query.eq("senderId", req.user.id).eq("recipientId", partnerId),
+            ),
+            fetchRows("messages", (query) =>
+                query.eq("senderId", partnerId).eq("recipientId", req.user.id),
+            ),
+        ]);
+
+        res.json({ messages: mergeConversation(sent, received) });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post("/api/messages", authenticateToken, async (req, res) => {
+    try {
+        const payload = req.body ?? {};
+        const text = typeof payload.body === "string" ? payload.body.trim() : "";
+        const explicitRecipient = typeof payload.recipientId === "string" ? payload.recipientId.trim() : "";
+
+        if (!text) {
+            return res.status(400).json({ message: "Write a message before sending it" });
+        }
+        if (text.length > MAX_MESSAGE_LENGTH) {
+            return res.status(400).json({
+                message: `A message cannot be longer than ${MAX_MESSAGE_LENGTH} characters`,
+            });
+        }
+
+        // A student has exactly one counterpart, so the client may omit the
+        // recipient and let the server resolve it from the assignment.
+        let recipientId = explicitRecipient;
+        if (!recipientId && req.user.role === "student") {
+            recipientId = (await getAssignedSupervisorId(req.user.id)) ?? "";
+        }
+
+        const { partnerId, denied } = await resolveMessagePartner(req.user, recipientId);
+        if (denied) {
+            return res.status(denied.status).json({ message: denied.message });
+        }
+
+        const { data: message, error } = await supabase
+            .from("messages")
+            .insert({
+                senderId: req.user.id,
+                recipientId: partnerId,
+                body: text,
+                createdAt: new Date().toISOString(),
+            })
+            .select()
+            .single();
+        if (error) throw error;
+
+        const preview = text.length > 120 ? `${text.slice(0, 117)}...` : text;
+        await safeSideEffect("message activity", () =>
+            createActivity({
+                userId: partnerId,
+                type: "message",
+                title: "New message",
+                body: preview,
+                tone: "indigo",
+            }),
+        );
+
+        res.status(201).json({ message });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Opening a thread clears its unread state for the reader only — never the
+// other participant's copy.
+app.post("/api/messages/read", authenticateToken, async (req, res) => {
+    try {
+        const withId = typeof req.body?.with === "string" ? req.body.with.trim() : "";
+        const { partnerId, denied } = await resolveMessagePartner(req.user, withId);
+        if (denied) {
+            return res.status(denied.status).json({ message: denied.message });
+        }
+
+        const readAt = new Date().toISOString();
+        const { error } = await supabase
+            .from("messages")
+            .update({ readAt })
+            .eq("senderId", partnerId)
+            .eq("recipientId", req.user.id)
+            .is("readAt", null);
+        if (error) throw error;
+
+        res.json({ readAt });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// --- Defence day and score routes --------------------------------------------
+//
+// Who may write what is enforced here, never in the UI: only the assigned
+// supervisor may score the report, only the coordinator may record the defence
+// score or publish, and a published result is final for both.
+
+app.get("/api/defence-schedule", authenticateToken, async (req, res) => {
+    try {
+        res.json({ schedule: await getCurrentDefenceSchedule() });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post("/api/defence-schedule", authenticateToken, requireRole("coordinator"), async (req, res) => {
+    try {
+        const payload = req.body ?? {};
+        const title = typeof payload.title === "string" && payload.title.trim()
+            ? payload.title.trim()
+            : "Project defence";
+        const scheduledDate = typeof payload.scheduledDate === "string" ? payload.scheduledDate.trim() : "";
+        const startTime = typeof payload.startTime === "string" ? payload.startTime.trim() : "";
+        const venue = typeof payload.venue === "string" ? payload.venue.trim() : "";
+        const instructions = typeof payload.instructions === "string"
+            ? payload.instructions.trim() || null
+            : null;
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(scheduledDate)) {
+            return res.status(400).json({ message: "A defence date is required" });
+        }
+        if (!startTime) {
+            return res.status(400).json({ message: "A start time is required" });
+        }
+        if (!venue) {
+            return res.status(400).json({ message: "A venue is required" });
+        }
+
+        const previous = await getCurrentDefenceSchedule();
+        const now = new Date().toISOString();
+
+        const { data: schedule, error } = await supabase
+            .from("defence_schedules")
+            .insert({
+                title,
+                scheduledDate,
+                startTime,
+                venue,
+                instructions,
+                createdBy: req.user.id,
+                publishedAt: now,
+                createdAt: now,
+                updatedAt: now,
+            })
+            .select()
+            .single();
+        if (error) throw error;
+
+        // Seed before notifying: a student who opens the page straight after the
+        // notification should find their result row already there.
+        await safeSideEffect("defence result seeding", () => ensureDefenceResults(schedule));
+        await safeSideEffect("defence notification", () =>
+            notifyDefenceAudience(schedule, { updated: Boolean(previous) }),
+        );
+
+        res.status(201).json({ schedule });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.get("/api/defence-results", authenticateToken, async (req, res) => {
+    try {
+        const schedule = await getCurrentDefenceSchedule();
+
+        if (req.user.role === "student") {
+            // A student only ever sees their own row, and only once it has been
+            // published. This gate is here rather than in the UI.
+            const result = await findDefenceResult(req.user.id);
+            const results = result?.status === "published" ? [result] : [];
+            return res.json({ schedule, results });
+        }
+
+        if (req.user.role === "supervisor") {
+            const studentIds = await listAssignedStudentIds(req.user.id);
+            if (!studentIds.length) return res.json({ schedule, results: [] });
+
+            const results = await fetchRows("defence_results", (query) =>
+                query.in("studentId", studentIds),
+            );
+            return res.json({ schedule, results });
+        }
+
+        if (req.user.role === "coordinator") {
+            // Writes on a read: a project created after the schedule was published
+            // still needs its result row before it can be scored.
+            return res.json({ schedule, results: await ensureDefenceResults(schedule) });
+        }
+
+        return res.status(403).json({ message: "Insufficient permissions" });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post(
+    "/api/defence-results/:studentId/supervisor-score",
+    authenticateToken,
+    requireRole("supervisor"),
+    async (req, res) => {
+        try {
+            const studentId = req.params.studentId;
+
+            // The relationship is re-read, never taken from the path id.
+            const allowed = await canReviewStudent(req.user, studentId);
+            if (!allowed) {
+                return res.status(403).json({ message: "This student is not assigned to you" });
+            }
+
+            const schedule = await getCurrentDefenceSchedule();
+            if (!schedule) {
+                return res.status(400).json({ message: "The defence day has not been scheduled yet" });
+            }
+
+            await ensureDefenceResults(schedule);
+            const result = await findDefenceResult(studentId);
+            if (!result) {
+                return res.status(404).json({ message: "This student does not have a project to score yet" });
+            }
+
+            const denied = refuseIfPublished(result);
+            if (denied) return res.status(denied.status).json({ message: denied.message });
+
+            const payload = req.body ?? {};
+            const breakdown = payload.breakdown && typeof payload.breakdown === "object"
+                ? payload.breakdown
+                : {};
+
+            // Recomputed from the criteria rather than taken from the client, so a
+            // tampered total cannot be submitted.
+            const score = calculateReportScore(breakdown);
+            const ceiling = Number(result.supervisorMax) || SCORE_MAX;
+            if (score === null || !isWithinRange(score, ceiling)) {
+                return res.status(400).json({
+                    message: `Mark every criterion between 0 and ${SCORE_MAX}`,
+                });
+            }
+
+            const submit = payload.submit !== false;
+            const now = new Date().toISOString();
+
+            // Whether this completes the collation is decided by the shared helper,
+            // so the status stored here matches what the coordinator's screen shows.
+            const settled = describeResult({
+                supervisorScore: score,
+                supervisorMax: result.supervisorMax,
+                defenceScore: result.defenceScore,
+                defenceMax: result.defenceMax,
+            });
+
+            const { data: updated, error } = await supabase
+                .from("defence_results")
+                .update({
+                    supervisorId: req.user.id,
+                    supervisorScore: score,
+                    supervisorBreakdown: breakdown,
+                    supervisorStatus: submit ? "submitted" : "draft",
+                    supervisorSubmittedAt: submit ? now : result.supervisorSubmittedAt,
+                    supervisorUpdatedAt: now,
+                    status: settled.ready ? "ready" : "collecting",
+                    updatedAt: now,
+                })
+                .eq("id", result.id)
+                .select()
+                .single();
+            if (error) throw error;
+
+            const firstScore = result.supervisorScore === null || result.supervisorScore === undefined;
+
+            await safeSideEffect("score audit", () =>
+                recordScoreAudit([
+                    {
+                        resultId: result.id,
+                        studentId,
+                        field: "supervisorScore",
+                        oldValue: firstScore ? null : String(result.supervisorScore),
+                        newValue: String(score),
+                        action: firstScore ? "submitted" : "updated",
+                        actorId: req.user.id,
+                        actorRole: req.user.role,
+                    },
+                ]),
+            );
+
+            await safeSideEffect("score notification", () =>
+                notifyCoordinators({
+                    type: "supervisor_score_submitted",
+                    title: submit ? "Supervisor score submitted" : "Supervisor score saved",
+                    body: `${updated.supervisorScore}/${ceiling} — ${submit ? "ready for collation" : "saved as a draft"}.`,
+                    tone: "indigo",
+                }),
+            );
+
+            res.json({ result: updated });
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    },
+);
+
+app.post(
+    "/api/defence-results/:studentId/defence-score",
+    authenticateToken,
+    requireRole("coordinator"),
+    async (req, res) => {
+        try {
+            const studentId = req.params.studentId;
+            const result = await findDefenceResult(studentId);
+            if (!result) {
+                return res.status(404).json({ message: "No result found for this student" });
+            }
+
+            const denied = refuseIfPublished(result);
+            if (denied) return res.status(denied.status).json({ message: denied.message });
+
+            const ceiling = Number(result.defenceMax) || SCORE_MAX;
+            const raw = req.body?.defenceScore;
+            if (!isWithinRange(raw, ceiling)) {
+                return res.status(400).json({ message: `A defence score between 0 and ${ceiling} is required` });
+            }
+            const score = Number(raw);
+            const now = new Date().toISOString();
+
+            const settled = describeResult({
+                supervisorScore: result.supervisorScore,
+                supervisorMax: result.supervisorMax,
+                defenceScore: score,
+                defenceMax: result.defenceMax,
+            });
+
+            const { data: updated, error } = await supabase
+                .from("defence_results")
+                .update({
+                    defenceScore: score,
+                    defenceRecordedBy: req.user.id,
+                    defenceRecordedAt: now,
+                    status: settled.ready ? "ready" : "collecting",
+                    updatedAt: now,
+                })
+                .eq("id", result.id)
+                .select()
+                .single();
+            if (error) throw error;
+
+            const firstScore = result.defenceScore === null || result.defenceScore === undefined;
+
+            await safeSideEffect("score audit", () =>
+                recordScoreAudit([
+                    {
+                        resultId: result.id,
+                        studentId,
+                        field: "defenceScore",
+                        oldValue: firstScore ? null : String(result.defenceScore),
+                        newValue: String(score),
+                        action: firstScore ? "recorded" : "updated",
+                        actorId: req.user.id,
+                        actorRole: req.user.role,
+                    },
+                ]),
+            );
+
+            res.json({ result: updated });
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    },
+);
+
+app.post(
+    "/api/defence-results/:studentId/publish",
+    authenticateToken,
+    requireRole("coordinator"),
+    async (req, res) => {
+        try {
+            const studentId = req.params.studentId;
+            const result = await findDefenceResult(studentId);
+            if (!result) {
+                return res.status(404).json({ message: "No result found for this student" });
+            }
+
+            const denied = refuseIfPublished(result);
+            if (denied) return res.status(denied.status).json({ message: denied.message });
+
+            // The one place that decides whether a result may be published.
+            const collated = describeResult(result);
+            if (!collated.ready) {
+                return res.status(400).json({
+                    message: `Cannot publish yet — the ${collated.missing.join(" and ")} is still missing`,
+                });
+            }
+
+            const now = new Date().toISOString();
+            const { data: updated, error } = await supabase
+                .from("defence_results")
+                .update({
+                    finalScore: collated.finalScore,
+                    grade: collated.grade,
+                    status: "published",
+                    publishedAt: now,
+                    publishedBy: req.user.id,
+                    updatedAt: now,
+                })
+                .eq("id", result.id)
+                .select()
+                .single();
+            if (error) throw error;
+
+            await safeSideEffect("publication audit", () =>
+                recordScoreAudit([
+                    {
+                        resultId: result.id,
+                        studentId,
+                        field: "finalScore",
+                        oldValue: null,
+                        newValue: String(collated.finalScore),
+                        action: "published",
+                        actorId: req.user.id,
+                        actorRole: req.user.role,
+                    },
+                ]),
+            );
+
+            await safeSideEffect("result notification", () =>
+                createActivity({
+                    userId: studentId,
+                    type: "result_published",
+                    title: "Final result published",
+                    body: `Your final project score is ${collated.finalScore} (grade ${collated.grade}).`,
+                    tone: "emerald",
+                }),
+            );
+
+            res.json({ result: updated });
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    },
+);
+
+app.get(
+    "/api/defence-results/:studentId/audit",
+    authenticateToken,
+    requireRole("coordinator"),
+    async (req, res) => {
+        try {
+            const entries = await fetchRows("defence_score_audit", (query) =>
+                query.eq("studentId", req.params.studentId).order("createdAt", { ascending: false }),
+            );
+            res.json({ entries });
+        } catch (error) {
+            res.status(500).json({ message: error.message });
+        }
+    },
+);
+
+// --- Defence checklist routes ------------------------------------------------
+//
+// Private to one student. No route here accepts a student id from the client:
+// every read and write is scoped to req.user.id, so one student can never reach
+// another's list even by guessing an item id.
+
+app.get("/api/checklist", authenticateToken, requireRole("student"), async (req, res) => {
+    try {
+        const items = await fetchRows("defence_checklist_items", (query) =>
+            query.eq("studentId", req.user.id).order("createdAt", { ascending: true }),
+        );
+        res.json({ items });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post("/api/checklist", authenticateToken, requireRole("student"), async (req, res) => {
+    try {
+        const payload = req.body ?? {};
+        const title = typeof payload.title === "string" ? payload.title.trim() : "";
+        const notes = typeof payload.notes === "string" ? payload.notes.trim() || null : null;
+
+        if (!title) {
+            return res.status(400).json({ message: "Give the checklist item a title" });
+        }
+        if (title.length > MAX_CHECKLIST_TITLE) {
+            return res.status(400).json({
+                message: `A checklist item cannot be longer than ${MAX_CHECKLIST_TITLE} characters`,
+            });
+        }
+        if (notes && notes.length > MAX_CHECKLIST_NOTES) {
+            return res.status(400).json({
+                message: `Notes cannot be longer than ${MAX_CHECKLIST_NOTES} characters`,
+            });
+        }
+
+        const now = new Date().toISOString();
+        const { data: item, error } = await supabase
+            .from("defence_checklist_items")
+            .insert({
+                studentId: req.user.id,
+                title,
+                notes,
+                done: false,
+                createdAt: now,
+                updatedAt: now,
+            })
+            .select()
+            .single();
+        if (error) throw error;
+
+        res.status(201).json({ item });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post("/api/checklist/:itemId", authenticateToken, requireRole("student"), async (req, res) => {
+    try {
+        const payload = req.body ?? {};
+        const changes = { updatedAt: new Date().toISOString() };
+
+        if (typeof payload.title === "string") {
+            const title = payload.title.trim();
+            if (!title) {
+                return res.status(400).json({ message: "Give the checklist item a title" });
+            }
+            if (title.length > MAX_CHECKLIST_TITLE) {
+                return res.status(400).json({
+                    message: `A checklist item cannot be longer than ${MAX_CHECKLIST_TITLE} characters`,
+                });
+            }
+            changes.title = title;
+        }
+
+        if (typeof payload.notes === "string") {
+            const notes = payload.notes.trim();
+            if (notes.length > MAX_CHECKLIST_NOTES) {
+                return res.status(400).json({
+                    message: `Notes cannot be longer than ${MAX_CHECKLIST_NOTES} characters`,
+                });
+            }
+            changes.notes = notes || null;
+        }
+
+        if (typeof payload.done === "boolean") {
+            changes.done = payload.done;
+            changes.completedAt = payload.done ? new Date().toISOString() : null;
+        }
+
+        // The owner is part of the filter, so another student's item id simply
+        // matches nothing rather than being edited.
+        const { data: item, error } = await supabase
+            .from("defence_checklist_items")
+            .update(changes)
+            .eq("id", req.params.itemId)
+            .eq("studentId", req.user.id)
+            .select()
+            .maybeSingle();
+        if (error) throw error;
+        if (!item) {
+            return res.status(404).json({ message: "Checklist item not found" });
+        }
+
+        res.json({ item });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+app.post("/api/checklist/:itemId/delete", authenticateToken, requireRole("student"), async (req, res) => {
+    try {
+        const { data: deleted, error } = await supabase
+            .from("defence_checklist_items")
+            .delete()
+            .eq("id", req.params.itemId)
+            .eq("studentId", req.user.id)
+            .select()
+            .maybeSingle();
+        if (error) throw error;
+        if (!deleted) {
+            return res.status(404).json({ message: "Checklist item not found" });
+        }
+
+        res.json({ deleted: deleted.id });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
 // --- Chapter routes ----------------------------------------------------------
 
 app.get("/api/chapters", authenticateToken, async (req, res) => {
@@ -2027,9 +2975,17 @@ app.post("/api/final-submission", authenticateToken, requireRole("student"), asy
         }
 
         const now = new Date().toISOString();
+        const finalIndex = PROJECT_STAGE_INDEX.finalSubmission;
         const { data: updated, error } = await supabase
             .from("projects")
-            .update({ stage: "Final submission", status: "final_submission", finalSubmittedAt: now })
+            .update({
+                stage: PROJECT_TIMELINE[finalIndex],
+                status: PROJECT_STATUS.finalSubmission,
+                // The one stage whose progress is not a sixth of the bar: the project
+                // is finished, so the timeline reads as complete.
+                progress: progressForStage(finalIndex),
+                finalSubmittedAt: now,
+            })
             .eq("id", project.id)
             .select()
             .single();
@@ -2097,7 +3053,7 @@ app.get(/^\/(?!api).*/, (req, res) => {
     res.sendFile(path.join(__dirname, "dist", "index.html"));
 });
 
-// The topic/proposal/meeting workflows need these tables. Without them the
+// The topic/proposal/meeting/defence workflows need these tables. Without them the
 // related endpoints return 500 and the matching portal screens stay empty.
 const REQUIRED_TABLES = [
     "users",
@@ -2107,6 +3063,11 @@ const REQUIRED_TABLES = [
     "meeting_requests",
     "chapters",
     "chapter_comments",
+    "messages",
+    "defence_schedules",
+    "defence_results",
+    "defence_score_audit",
+    "defence_checklist_items",
 ];
 
 const verifySchema = async () => {

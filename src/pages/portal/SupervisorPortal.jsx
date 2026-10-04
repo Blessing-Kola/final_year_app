@@ -1,24 +1,30 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { CheckCircle2 } from "lucide-react";
 import TopicReviewPanel from "../../components/TopicReviewPanel";
 import SupervisorChapterReview from "../../components/SupervisorChapterReview";
 import { Feedback, StatusBadge } from "../../components/StatusBadge";
+import MessageThread from "../../components/MessageThread";
+import DefenceDayCard from "../../components/DefenceDayCard";
 import { SupervisorMeetingRequests } from "../../components/MeetingRequests";
+import { defenceApi } from "../../services/api";
 import { usePortalData } from "../../hooks/usePortalData";
-
-// Mirrors the stage list on the student dashboard so both portals agree on progress.
-const TIMELINE = [
-  "Proposal",
-  "Supervisor assigned",
-  "Chapter writing",
-  "Chapter review",
-  "Defense",
-  "Final submission",
-];
+import { useDefenceSchedule } from "../../hooks/useDefenceSchedule";
+import { useAuth } from "../../context/useAuth";
+import { hasUnreadFrom, lastMessageWith } from "../../lib/messages";
+import {
+  SCORE_MAX,
+  SUPERVISOR_CRITERIA,
+  calculateReportScore,
+} from "../../lib/scores";
+import { formatTimestamp } from "../../lib/defenceDay";
+// The stage list itself lives in src/lib/projectStage.js, beside the server's
+// derivation of the same stage, so both portals draw the same six steps.
+import { PROJECT_TIMELINE as TIMELINE } from "../../lib/projectStage";
 
 export function SupervisorDashboard() {
   const { data } = usePortalData();
+  const { schedule: defenceDay, loading: defenceLoading, error: defenceError } = useDefenceSchedule();
   const students = Array.isArray(data?.students) ? data.students : [];
   const reviews = Array.isArray(data?.reviews) ? data.reviews : [];
   const meetings = Array.isArray(data?.meetings) ? data.meetings : [];
@@ -46,6 +52,8 @@ export function SupervisorDashboard() {
           </div>
         ))}
       </div>
+
+      <DefenceDayCard schedule={defenceDay} loading={defenceLoading} error={defenceError} />
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -251,68 +259,6 @@ export function SupervisorReviewsPage() {
   );
 }
 
-export function SupervisorFeedbackPage() {
-  const { data } = usePortalData();
-  const students = (data?.students ?? []).filter(
-    (student) => student && student.id,
-  );
-
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">
-        Feedback composer
-      </h2>
-      <div className="mt-4 space-y-4">
-        {students.length ? (
-          <>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
-                Student
-              </label>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                {students.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
-                Overall assessment
-              </label>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                <option>Approved</option>
-                <option>Needs revision</option>
-                <option>Rejected</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
-                Strengths
-              </label>
-              <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
-                Areas for improvement
-              </label>
-              <textarea className="min-h-[90px] w-full rounded-xl border border-slate-200 px-3 py-2.5" />
-            </div>
-            <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
-              Send feedback
-            </button>
-          </>
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-            No students are assigned yet, so there is no feedback to compose.
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export function SupervisorSchedulingPage() {
   const { data } = usePortalData();
   const meetings = (data?.meetings ?? []).filter(
@@ -348,92 +294,295 @@ export function SupervisorSchedulingPage() {
   );
 }
 
-export function SupervisorEvaluationPage() {
-  const { data } = usePortalData();
-  const students = (data?.students ?? []).filter(
-    (student) => student && student.id,
-  );
+// One student's project report score. The weighted total is computed by the shared
+// module, so the number shown while marking is the number the server will store.
+function ReportScoreForm({ student, result, onResultChange }) {
+  const [marks, setMarks] = useState(() => {
+    const saved = result?.supervisorBreakdown ?? {};
+    return Object.fromEntries(
+      SUPERVISOR_CRITERIA.map((criterion) => {
+        const value = saved[criterion.key];
+        return [criterion.key, value === null || value === undefined ? "" : String(value)];
+      }),
+    );
+  });
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  const published = result.status === "published";
+  const total = calculateReportScore(marks);
+  const submitted = result.supervisorStatus === "submitted";
+
+  const send = async (submit) => {
+    if (busy) return;
+    setBusy(submit ? "submit" : "draft");
+    setError("");
+    try {
+      const response = await defenceApi.submitSupervisorScore(student.id, {
+        breakdown: marks,
+        submit,
+      });
+      onResultChange(response.result);
+    } catch (saveError) {
+      setError(saveError.message || "The score could not be saved.");
+    } finally {
+      setBusy("");
+    }
+  };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">Evaluation</h2>
-      <div className="mt-4 space-y-4">
-        {students.length ? (
-          <>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">
-                Student
-              </label>
-              <select className="w-full rounded-xl border border-slate-200 px-3 py-2.5">
-                {students.map((student) => (
-                  <option key={student.id} value={student.id}>
-                    {student.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-2">
-              {[
-                { label: "Research quality", weight: "25%" },
-                { label: "Methodology", weight: "20%" },
-                { label: "Writing", weight: "20%" },
-                { label: "Defense presentation", weight: "20%" },
-                { label: "Originality", weight: "15%" },
-              ].map((criterion) => (
-                <div
-                  key={criterion.label}
-                  className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3"
-                >
-                  <div>
-                    <p className="font-medium text-slate-900">
-                      {criterion.label}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      Weight {criterion.weight}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    {[1, 2, 3, 4, 5].map((score) => (
-                      <button
-                        key={score}
-                        className="rounded-full border border-slate-200 px-2.5 py-1 text-sm text-slate-700"
-                      >
-                        {score}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white">
-              Submit evaluation
-            </button>
-          </>
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-            No assigned students are available for evaluation yet.
-          </div>
-        )}
+    <div className="rounded-xl border border-slate-200 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="font-medium text-slate-900">{student.name || "Student"}</p>
+          {student.studentId ? (
+            <p className="text-sm text-slate-500">{student.studentId}</p>
+          ) : null}
+        </div>
+        <StatusBadge
+          status={published ? "published" : result.supervisorStatus}
+          fallback="Not submitted"
+        />
       </div>
+
+      {published ? (
+        // Read-only: the coordinator has published, so the score is history.
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Your score (50%)</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {result.supervisorScore} / {Number(result.supervisorMax) || SCORE_MAX}
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Defence score (50%)</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {result.defenceScore} / {Number(result.defenceMax) || SCORE_MAX}
+            </p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-3">
+            <p className="text-xs uppercase tracking-wide text-slate-500">Final score</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {result.finalScore}
+              <span className="ml-2 text-sm font-normal text-slate-500">
+                Grade {result.grade}
+              </span>
+            </p>
+          </div>
+          <p className="text-sm text-slate-500 sm:col-span-3">
+            Published {formatTimestamp(result.publishedAt)}. Scores can no longer be changed.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-4 space-y-2">
+            {SUPERVISOR_CRITERIA.map((criterion) => (
+              <div
+                key={criterion.key}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 px-3 py-3"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">{criterion.label}</p>
+                  <p className="text-sm text-slate-500">Weight {criterion.weight}%</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="sr-only" htmlFor={`${criterion.key}-${student.id}`}>
+                    {criterion.label} score out of {SCORE_MAX}
+                  </label>
+                  <input
+                    id={`${criterion.key}-${student.id}`}
+                    type="number"
+                    min="0"
+                    max={SCORE_MAX}
+                    step="1"
+                    value={marks[criterion.key]}
+                    onChange={(event) =>
+                      setMarks((current) => ({ ...current, [criterion.key]: event.target.value }))
+                    }
+                    placeholder="—"
+                    className="w-24 rounded-xl border border-slate-200 px-3 py-2 text-sm"
+                  />
+                  <span className="text-sm text-slate-500">/ {SCORE_MAX}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-slate-50 p-3">
+            <p className="text-sm text-slate-600">
+              Project report score:{" "}
+              <span className="text-base font-semibold text-slate-900">
+                {total === null ? "—" : total}
+              </span>{" "}
+              / {SCORE_MAX}
+            </p>
+            {result.supervisorSubmittedAt ? (
+              <p className="text-xs text-slate-500">
+                {submitted ? "Submitted" : "Saved"} {formatTimestamp(result.supervisorSubmittedAt)}
+              </p>
+            ) : null}
+          </div>
+
+          <div className="mt-3 space-y-3">
+            <Feedback tone="error">{error}</Feedback>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => send(false)}
+                disabled={total === null || busy !== ""}
+                className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "draft" ? "Saving…" : "Save as draft"}
+              </button>
+              <button
+                type="button"
+                onClick={() => send(true)}
+                disabled={total === null || busy !== ""}
+                className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {busy === "submit" ? "Submitting…" : "Submit for collation"}
+              </button>
+            </div>
+            <p className="text-xs text-slate-500">
+              {total === null
+                ? `Mark every criterion out of ${SCORE_MAX} to save.`
+                : "You can revise this score until the coordinator publishes the result."}
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+export function SupervisorEvaluationPage() {
+  const { data } = usePortalData();
+  const [results, setResults] = useState([]);
+  const [schedule, setSchedule] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    defenceApi
+      .listResults()
+      .then((response) => {
+        if (!active) return;
+        setResults(Array.isArray(response.results) ? response.results : []);
+        setSchedule(response.schedule ?? null);
+      })
+      .catch((loadError) => {
+        if (active) setError(loadError.message || "Your students' results could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const students = (data?.students ?? []).filter((student) => student && student.id);
+  const studentById = new Map(students.map((student) => [student.id, student]));
+
+  const onResultChange = (updated) =>
+    setResults((current) =>
+      current.map((row) => (row.studentId === updated.studentId ? updated : row)),
+    );
+
+  const rows = results
+    .map((result) => ({
+      result,
+      student: studentById.get(result.studentId) ?? { id: result.studentId, name: "Student" },
+    }))
+    .sort((a, b) => String(a.student.name || "").localeCompare(String(b.student.name || "")));
+
+  const outstanding = rows.filter(
+    (row) => row.result.status !== "published" && row.result.supervisorStatus !== "submitted",
+  ).length;
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Evaluation</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Project report scores. The report counts for 50% of the final score; the
+          defence counts for the other 50%.
+        </p>
+
+        {schedule ? (
+          <div className="mt-4">
+            <DefenceDayCard schedule={schedule} />
+          </div>
+        ) : null}
+
+        {rows.length ? (
+          <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate-600">
+            <span className="rounded-full bg-slate-100 px-3 py-1">
+              {rows.length} student{rows.length === 1 ? "" : "s"}
+            </span>
+            {outstanding ? (
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">
+                {outstanding} still to submit
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      <Feedback tone="error">{error}</Feedback>
+
+      {loading ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
+          Loading your students…
+        </div>
+      ) : !schedule ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+          The coordinator has not scheduled the defence day yet. Project report scoring
+          opens once it is published.
+        </div>
+      ) : rows.length ? (
+        <div className="space-y-3">
+          {rows.map(({ result, student }) => (
+            <ReportScoreForm
+              key={result.id}
+              student={student}
+              result={result}
+              onResultChange={onResultChange}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-sm text-slate-500">
+          No assigned students are available for evaluation yet.
+        </div>
+      )}
     </div>
   );
 }
 
 export function SupervisorCommunicationPage() {
   const { data } = usePortalData();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("messages");
   const [selectedStudentId, setSelectedStudentId] = useState(null);
+  // The portal payload is fetched once per page, so the thread reports its own
+  // fresher rows back here. Without this the "New" badge below could never
+  // clear: MessageThread marks a thread read through the API, but this list
+  // would keep reading the snapshot taken when the page mounted.
+  const [threadMessages, setThreadMessages] = useState({});
+
+  const handleConversationChange = useCallback((partnerId, rows) => {
+    setThreadMessages((current) => ({ ...current, [partnerId]: rows }));
+  }, []);
 
   const students = data?.students ?? [];
-  const messages = data?.messages ?? [];
+  const messages = Array.isArray(data?.messages) ? data.messages : [];
   const activeStudentId = selectedStudentId ?? students[0]?.id ?? null;
   const activeStudent =
     students.find((student) => student.id === activeStudentId) ?? null;
-  const conversation = messages.filter(
-    (message) =>
-      message.senderId === activeStudentId ||
-      message.recipientId === activeStudentId,
-  );
 
   return (
     <div className="space-y-6">
@@ -466,11 +615,12 @@ export function SupervisorCommunicationPage() {
             </h2>
             <div className="mt-4 space-y-2">
               {students.map((student) => {
-                const lastMessage = messages.find(
-                  (message) =>
-                    message.senderId === student.id ||
-                    message.recipientId === student.id,
-                );
+                // Per-student, not just "the first message mentioning them" —
+                // otherwise a thread can preview a message from another student.
+                const thread = threadMessages[student.id] ?? messages;
+                const lastMessage = lastMessageWith(thread, student.id);
+                const unread = hasUnreadFrom(thread, user?.id, student.id);
+
                 return (
                   <button
                     key={student.id}
@@ -482,7 +632,14 @@ export function SupervisorCommunicationPage() {
                         : "border-slate-200"
                     }`}
                   >
-                    <p className="font-medium text-slate-900">{student.name}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-slate-900">{student.name}</p>
+                      {unread ? (
+                        <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-xs font-medium text-white">
+                          New
+                        </span>
+                      ) : null}
+                    </div>
                     <p className="mt-1 truncate text-sm text-slate-500">
                       {lastMessage?.body || "No messages yet."}
                     </p>
@@ -497,50 +654,17 @@ export function SupervisorCommunicationPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="border-b border-slate-200 pb-3">
-              <h2 className="font-semibold text-slate-900">
-                {activeStudent?.name || "Student"}
-              </h2>
-              <p className="text-sm text-slate-500">
-                {activeStudent
-                  ? activeStudent.studentId || activeStudent.email
-                  : "No conversation selected"}
-              </p>
-            </div>
-            <div className="mt-4 space-y-3">
-              {conversation.map((message) => (
-                <div
-                  key={message.id}
-                  className={`max-w-[80%] rounded-2xl p-3 text-sm ${
-                    message.senderId === activeStudentId
-                      ? "bg-slate-100 text-slate-700"
-                      : "ml-auto bg-indigo-600 text-white"
-                  }`}
-                >
-                  {message.body}
-                </div>
-              ))}
-              {!conversation.length ? (
-                <p className="text-sm text-slate-500">
-                  No messages in this conversation yet.
-                </p>
-              ) : null}
-            </div>
-            <div className="mt-4 flex items-end gap-2 rounded-2xl border border-slate-200 p-3">
-              <textarea
-                className="min-h-[80px] flex-1 resize-none border-0 outline-none"
-                placeholder="Write a message"
-                disabled={!activeStudent}
-              />
-              <button
-                disabled={!activeStudent}
-                className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                Send
-              </button>
-            </div>
-          </div>
+          <MessageThread
+            key={activeStudentId}
+            partnerId={activeStudentId}
+            partnerName={activeStudent?.name}
+            partnerSubtitle={
+              activeStudent ? activeStudent.studentId || activeStudent.email : ""
+            }
+            currentUserId={user?.id}
+            onConversationChange={handleConversationChange}
+            emptyHint="No students have been assigned to you yet, so there is nobody to message."
+          />
         </div>
       ) : (
         <SupervisorMeetingRequests />
