@@ -78,7 +78,6 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     if (!user) {
-      setIdleWarning(false);
       restartIdleTimers.current = () => {};
       return undefined;
     }
@@ -122,7 +121,7 @@ export function AuthProvider({ children }) {
     () => ({
       user,
       loading,
-      idleWarning,
+      idleWarning: user ? idleWarning : false,
       staySignedIn: () => {
         setIdleWarning(false);
         restartIdleTimers.current();

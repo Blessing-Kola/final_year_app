@@ -1,5 +1,13 @@
 create extension if not exists pgcrypto;
 
+-- Private document storage. Uploads and downloads are authorized through
+-- short-lived signed URLs issued by the server.
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('project-documents', 'project-documents', false, 20971520)
+on conflict (id) do update
+set public = false,
+    file_size_limit = excluded.file_size_limit;
+
 -- Internal project roles only: student, supervisor, coordinator.
 create table if not exists public.users (
   id uuid primary key default gen_random_uuid(),
@@ -383,4 +391,3 @@ create table if not exists public.defence_checklist_items (
 
 create index if not exists defence_checklist_student_idx
   on public.defence_checklist_items ("studentId", "createdAt");
-

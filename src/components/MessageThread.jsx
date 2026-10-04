@@ -89,10 +89,13 @@ export default function MessageThread({
   useEffect(() => {
     if (!partnerId) return undefined;
 
-    load();
+    const initialLoadId = window.setTimeout(() => load(), 0);
     const intervalId = window.setInterval(() => load({ quiet: true }), REFRESH_INTERVAL);
 
-    return () => window.clearInterval(intervalId);
+    return () => {
+      window.clearTimeout(initialLoadId);
+      window.clearInterval(intervalId);
+    };
   }, [partnerId, load]);
 
   // Keep the newest message in view as the thread grows. Scrolling the list

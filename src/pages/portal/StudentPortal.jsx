@@ -413,9 +413,7 @@ export function StudentProjectPage() {
     try {
       let documentId = null;
       if (proposalFile) {
-        const formData = new FormData();
-        formData.append("file", proposalFile);
-        const uploadResponse = await documentsApi.upload(formData);
+        const uploadResponse = await documentsApi.upload(proposalFile);
         documentId = uploadResponse.document?.id ?? null;
       }
 

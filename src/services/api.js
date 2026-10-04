@@ -1,9 +1,14 @@
+import { createClient } from "@supabase/supabase-js";
+
 // A relative base keeps requests same-origin: Vite proxies "/api" to Express in
 // dev, and Express serves the built client itself in production. Pointing this
 // at an absolute http://localhost:5000 makes every call cross-origin, which
 // means a preflight on each one and a hard failure if any response is missing
 // an Access-Control-Allow-Origin header.
 const API_BASE_URL = import.meta.env.VITE_API_URL || "/api";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+let storageClient;
 
 async function handleResponse(response) {
   const data = await response.json().catch(() => ({}));
@@ -35,6 +40,39 @@ export async function request(path, options = {}) {
   return handleResponse(response);
 }
 
+async function uploadDocument(file, uploadUrl, finalizeUrl) {
+  if (!(file instanceof File)) {
+    throw new Error("Choose a file to upload.");
+  }
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error("Supabase Storage is not configured for file uploads.");
+  }
+
+  const { upload } = await request(uploadUrl, {
+    method: "POST",
+    body: JSON.stringify({
+      fileName: file.name,
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+    }),
+  });
+
+  storageClient ??= createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error } = await storageClient.storage
+    .from(upload.bucket)
+    .uploadToSignedUrl(upload.path, upload.storageToken, file, {
+      contentType: file.type || "application/octet-stream",
+    });
+  if (error) throw new Error(error.message);
+
+  return request(finalizeUrl, {
+    method: "POST",
+    body: JSON.stringify({ ticket: upload.ticket }),
+  });
+}
+
 export const authApi = {
   login: (payload) =>
     request("/auth/login", {
@@ -52,17 +90,8 @@ export const authApi = {
 
 export const documentsApi = {
   list: () => request("/documents"),
-  upload: async (formData) => {
-    const token = window.localStorage.getItem("thesishub-token");
-    const response = await fetch(`${API_BASE_URL}/documents/upload`, {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    return handleResponse(response);
-  },
+  upload: (file) =>
+    uploadDocument(file, "/documents/upload-url", "/documents/finalize"),
   download: async (documentId) => {
     const response = await fetch(
       `${API_BASE_URL}/documents/${documentId}/download`,
@@ -175,19 +204,12 @@ export const chapterApi = {
   // Students get their own chapters; supervisors pass the student they are reviewing.
   list: (studentId) =>
     request(studentId ? `/chapters?studentId=${encodeURIComponent(studentId)}` : "/chapters"),
-  uploadDocument: async (chapterId, file) => {
-    const formData = new FormData();
-    formData.append("file", file);
-    const token = window.localStorage.getItem("thesishub-token");
-    const response = await fetch(`${API_BASE_URL}/chapters/${chapterId}/document`, {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-
-    return handleResponse(response);
-  },
+  uploadDocument: (chapterId, file) =>
+    uploadDocument(
+      file,
+      `/chapters/${chapterId}/document/upload-url`,
+      `/chapters/${chapterId}/document/finalize`,
+    ),
   submit: (chapterId) => request(`/chapters/${chapterId}/submit`, { method: "POST" }),
   addComment: (chapterId, comment) =>
     request(`/chapters/${chapterId}/comments`, {

@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import "dotenv/config";
-import multer from "multer";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
@@ -30,6 +29,7 @@ const PORT = process.env.PORT || 5000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadsDir = path.join(__dirname, "uploads");
+const DOCUMENTS_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "project-documents";
 
 // Refuse to boot without a real secret. A built-in fallback would let anyone who
 // has read this source mint valid tokens for any account.
@@ -38,10 +38,6 @@ if (!JWT_SECRET) {
     throw new Error(
         "JWT_SECRET is not set. Copy .env.example to .env and provide a long random value.",
     );
-}
-
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
 // Dev serves the client from Vite on a different port, so the API is reached
@@ -84,28 +80,6 @@ const ALLOWED_UPLOAD_EXTENSIONS = new Set([
 ]);
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-
-// Never build the stored name from the client-supplied filename: it can contain
-// path separators. Keep only the extension and generate the rest ourselves.
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadsDir),
-    filename: (req, file, cb) => {
-        const extension = path.extname(file.originalname).toLowerCase();
-        cb(null, `${Date.now()}-${crypto.randomUUID()}${extension}`);
-    },
-});
-
-const upload = multer({
-    storage,
-    limits: { fileSize: MAX_UPLOAD_BYTES },
-    fileFilter: (req, file, cb) => {
-        const extension = path.extname(file.originalname).toLowerCase();
-        if (!ALLOWED_UPLOAD_EXTENSIONS.has(extension)) {
-            return cb(new Error(`Unsupported file type "${extension || "unknown"}". Allowed: ${[...ALLOWED_UPLOAD_EXTENSIONS].join(", ")}`));
-        }
-        cb(null, true);
-    },
-});
 
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -199,6 +173,139 @@ const createDocumentRecord = async (documentData) => {
         .single();
     if (error) throw error;
     return data;
+};
+
+const createDocumentUpload = async (user, input, purpose, chapterId = null) => {
+    const originalName =
+        typeof input?.fileName === "string"
+            ? path.basename(input.fileName.replaceAll("\\", "/")).trim()
+            : "";
+    const extension = path.extname(originalName).toLowerCase();
+    const size = Number(input?.size);
+    const mimeType =
+        typeof input?.mimeType === "string" && input.mimeType.trim()
+            ? input.mimeType.trim()
+            : "application/octet-stream";
+
+    if (!originalName || !ALLOWED_UPLOAD_EXTENSIONS.has(extension)) {
+        throw Object.assign(new Error(
+            `Unsupported file type "${extension || "unknown"}". Allowed: ${[...ALLOWED_UPLOAD_EXTENSIONS].join(", ")}`,
+        ), { statusCode: 400 });
+    }
+    if (!Number.isSafeInteger(size) || size <= 0 || size > MAX_UPLOAD_BYTES) {
+        throw Object.assign(
+            new Error("The file must be between 1 byte and 20MB."),
+            { statusCode: 400 },
+        );
+    }
+
+    const filename = `${Date.now()}-${crypto.randomUUID()}${extension}`;
+    const storagePath = `${user.id}/${filename}`;
+    const { data, error } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .createSignedUploadUrl(storagePath, { upsert: false });
+    if (error) throw error;
+
+    const ticket = jwt.sign(
+        {
+            userId: user.id,
+            filename,
+            originalName,
+            mimeType,
+            size,
+            storagePath,
+            purpose,
+            chapterId,
+        },
+        JWT_SECRET,
+        { expiresIn: "10m", issuer: "thesishub-document-upload" },
+    );
+
+    return {
+        bucket: DOCUMENTS_BUCKET,
+        path: storagePath,
+        storageToken: data.token,
+        ticket,
+    };
+};
+
+const verifyDocumentUploadTicket = (token, user, purpose, chapterId = null) => {
+    const ticket = jwt.verify(token, JWT_SECRET, {
+        issuer: "thesishub-document-upload",
+    });
+    if (
+        ticket.userId !== user.id ||
+        ticket.purpose !== purpose ||
+        ticket.chapterId !== chapterId ||
+        typeof ticket.storagePath !== "string" ||
+        typeof ticket.filename !== "string" ||
+        typeof ticket.originalName !== "string" ||
+        typeof ticket.mimeType !== "string" ||
+        !Number.isSafeInteger(ticket.size)
+    ) {
+        throw new Error("This upload ticket is invalid or has expired.");
+    }
+    return ticket;
+};
+
+const persistUploadedDocument = async (ticket, userId) => {
+    const folder = ticket.storagePath.slice(0, ticket.storagePath.lastIndexOf("/"));
+    const { data: storedFiles, error: listError } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .list(folder, { search: ticket.filename });
+    if (listError) throw listError;
+
+    const uploadedFile = storedFiles?.find((file) => file.name === ticket.filename);
+    if (!uploadedFile || Number(uploadedFile.metadata?.size) !== ticket.size) {
+        throw new Error("The uploaded file is missing or its size does not match.");
+    }
+
+    return createDocumentRecord({
+        filename: ticket.filename,
+        originalName: ticket.originalName,
+        mimeType: ticket.mimeType,
+        size: ticket.size,
+        path: ticket.storagePath,
+        uploadedBy: userId,
+    });
+};
+
+const removeStoredUpload = async (storagePath) => {
+    const { error } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .remove([storagePath]);
+    if (error) throw error;
+};
+
+const redirectToDocument = async (res, document, { download = false } = {}) => {
+    const storedPath = document.path;
+    if (path.isAbsolute(storedPath)) {
+        const resolved = path.resolve(storedPath);
+        if (!resolved.startsWith(`${path.resolve(uploadsDir)}${path.sep}`)) {
+            return res.status(400).json({ message: "Invalid legacy document path" });
+        }
+        if (!fs.existsSync(resolved)) {
+            return res.status(404).json({ message: "The stored file is missing" });
+        }
+
+        const safeName = path.basename(String(document.originalName).replaceAll("\\", "/"));
+        if (download) return res.download(resolved, safeName);
+        res.setHeader("Content-Type", document.mimeType || "application/octet-stream");
+        res.setHeader(
+            "Content-Disposition",
+            `inline; filename="${safeName.replace(/[^\w.-]+/g, "_")}"`,
+        );
+        return res.sendFile(resolved);
+    }
+
+    const safeName = path.basename(String(document.originalName).replaceAll("\\", "/"));
+    const { data, error } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .createSignedUrl(storedPath, 60, {
+            ...(download ? { download: safeName } : {}),
+        });
+    if (error) throw error;
+    return res.redirect(302, data.signedUrl);
 };
 
 const createActivity = async (activityData) => {
@@ -1472,49 +1579,47 @@ const canAccessDocument = async (requester, document) => {
     return Boolean(data);
 };
 
-app.post(
-    "/api/documents/upload",
-    authenticateToken,
-    (req, res, next) => {
-        // Run multer by hand so its rejections become a 400 with a usable
-        // message instead of falling through to Express's HTML 500 page.
-        upload.single("file")(req, res, (error) => {
-            if (!error) return next();
-            const message = error.code === "LIMIT_FILE_SIZE"
-                ? "This file is larger than the 20MB limit"
-                : error.message;
-            return res.status(400).json({ message });
+app.post("/api/documents/upload-url", authenticateToken, async (req, res) => {
+    try {
+        res.json({
+            upload: await createDocumentUpload(req.user, req.body, "document"),
         });
-    },
-    async (req, res) => {
-        try {
-            if (!req.file) {
-                return res.status(400).json({ message: "No file uploaded" });
-            }
+    } catch (error) {
+        res.status(error.statusCode || 500).json({ message: error.message });
+    }
+});
 
-            const document = await createDocumentRecord({
-                filename: req.file.filename,
-                originalName: path.basename(req.file.originalname),
-                mimeType: req.file.mimetype,
-                size: req.file.size,
-                path: req.file.path,
-                uploadedBy: req.user.id,
-            });
+app.post("/api/documents/finalize", authenticateToken, async (req, res) => {
+    let ticket;
+    try {
+        ticket = verifyDocumentUploadTicket(
+            req.body?.ticket,
+            req.user,
+            "document",
+        );
+    } catch (error) {
+        return res.status(400).json({ message: error.message });
+    }
 
-            await createActivity({
-                userId: req.user.id,
-                type: "document_uploaded",
-                title: "Document uploaded",
-                body: `${req.file.originalname} was added to your project workspace.`,
-                tone: "emerald",
-            });
+    try {
+        const document = await persistUploadedDocument(ticket, req.user.id);
 
-            res.status(201).json({ document: normalizeDocument(document), message: "File uploaded successfully" });
-        } catch (error) {
-            res.status(500).json({ message: error.message });
-        }
-    },
-);
+        await createActivity({
+            userId: req.user.id,
+            type: "document_uploaded",
+            title: "Document uploaded",
+            body: `${ticket.originalName} was added to your project workspace.`,
+            tone: "emerald",
+        });
+
+        res.status(201).json({
+            document: normalizeDocument(document),
+            message: "File uploaded successfully",
+        });
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
 
 app.get("/api/student-topics", authenticateToken, async (req, res) => {
     try {
@@ -2612,45 +2717,75 @@ const CHAPTER_FILE_TYPES = new Set([
 ]);
 
 app.post(
-    "/api/chapters/:chapterId/document",
+    "/api/chapters/:chapterId/document/upload-url",
     authenticateToken,
     requireRole("student"),
-    upload.single("file"),
     async (req, res) => {
-        const discardUpload = async () => {
-            if (req.file) await fs.promises.unlink(req.file.path).catch(() => {});
-        };
-
         try {
-            if (!req.file) {
-                return res.status(400).json({ message: "No file uploaded" });
-            }
-
-            if (!CHAPTER_FILE_TYPES.has(req.file.mimetype)) {
-                await discardUpload();
-                return res.status(400).json({ message: "Upload your chapter as a PDF or Word document" });
-            }
-
-            // The bytes are already on disk by the time the guards run, so a
-            // rejected upload has to be removed again.
-            const { chapter, denied } = await resolveOpenChapter(req.params.chapterId, req.user.id);
+            const { denied } = await resolveOpenChapter(
+                req.params.chapterId,
+                req.user.id,
+            );
             if (denied) {
-                await discardUpload();
                 return res.status(denied.status).json({ message: denied.message });
             }
 
-            const document = await createDocumentRecord({
-                filename: req.file.filename,
-                originalName: req.file.originalname,
-                mimeType: req.file.mimetype,
-                size: req.file.size,
-                path: req.file.path,
-                uploadedBy: req.user.id,
-            });
+            if (!CHAPTER_FILE_TYPES.has(req.body?.mimeType)) {
+                return res.status(400).json({
+                    message: "Upload your chapter as a PDF or Word document",
+                });
+            }
 
+            res.json({
+                upload: await createDocumentUpload(
+                    req.user,
+                    req.body,
+                    "chapter",
+                    req.params.chapterId,
+                ),
+            });
+        } catch (error) {
+            res.status(error.statusCode || 500).json({ message: error.message });
+        }
+    },
+);
+
+app.post(
+    "/api/chapters/:chapterId/document/finalize",
+    authenticateToken,
+    requireRole("student"),
+    async (req, res) => {
+        let ticket;
+        try {
+            ticket = verifyDocumentUploadTicket(
+                req.body?.ticket,
+                req.user,
+                "chapter",
+                req.params.chapterId,
+            );
+        } catch (error) {
+            return res.status(400).json({ message: error.message });
+        }
+
+        let document;
+        try {
+            const { chapter, denied } = await resolveOpenChapter(
+                req.params.chapterId,
+                req.user.id,
+            );
+            if (denied) {
+                await removeStoredUpload(ticket.storagePath);
+                return res.status(denied.status).json({ message: denied.message });
+            }
+
+            document = await persistUploadedDocument(ticket, req.user.id);
             const { data: updated, error } = await supabase
                 .from("chapters")
-                .update({ documentId: document.id, status: "draft", updatedAt: new Date().toISOString() })
+                .update({
+                    documentId: document.id,
+                    status: "draft",
+                    updatedAt: new Date().toISOString(),
+                })
                 .eq("id", chapter.id)
                 .select()
                 .single();
@@ -2661,7 +2796,7 @@ app.post(
                     userId: req.user.id,
                     type: "chapter_uploaded",
                     title: `Chapter ${chapter.chapterNumber} draft uploaded`,
-                    body: `${req.file.originalname} was added. Submit the chapter when it is ready for review.`,
+                    body: `${ticket.originalName} was added. Submit the chapter when it is ready for review.`,
                     tone: "indigo",
                 }),
             );
@@ -2672,8 +2807,6 @@ app.post(
                 message: "Chapter document uploaded",
             });
         } catch (error) {
-            // Not discarded here: the failure may have happened after the document
-            // record was written, and a stray file beats a row pointing at nothing.
             res.status(500).json({ message: error.message });
         }
     },
@@ -2903,8 +3036,7 @@ app.post("/api/chapters/:chapterId/request-revision", authenticateToken, require
     reviewChapter(req, res, "needs_revision"),
 );
 
-// uploads/ is not served statically, so the bytes are streamed here after the
-// caller has been confirmed to be the owner or their assigned supervisor.
+// Redirect to a short-lived signed URL after checking the chapter's access rules.
 app.get("/api/chapters/:chapterId/document", authenticateToken, async (req, res) => {
     try {
         const chapter = await findChapter(req.params.chapterId);
@@ -2935,22 +3067,7 @@ app.get("/api/chapters/:chapterId/document", authenticateToken, async (req, res)
         if (error) throw error;
         if (!document) return res.status(404).json({ message: "Document not found" });
 
-        // The path was written by this server, but confirm it still resolves inside
-        // uploads/ so a bad row can never read a file elsewhere on the machine.
-        const resolved = path.resolve(document.path);
-        if (!resolved.startsWith(uploadsDir + path.sep)) {
-            return res.status(400).json({ message: "This document cannot be read" });
-        }
-
-        if (!fs.existsSync(resolved)) {
-            return res.status(404).json({ message: "The stored file is missing from the server" });
-        }
-
-        const safeName = String(document.originalName).replace(/[^\w.\-]+/g, "_");
-
-        res.setHeader("Content-Type", document.mimeType || "application/octet-stream");
-        res.setHeader("Content-Disposition", `inline; filename="${safeName}"`);
-        return res.sendFile(resolved);
+        return await redirectToDocument(res, document);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -3032,17 +3149,7 @@ app.get("/api/documents/:documentId/download", authenticateToken, async (req, re
             return res.status(403).json({ message: "You do not have access to this document" });
         }
 
-        const resolvedPath = path.resolve(document.path);
-        if (!resolvedPath.startsWith(path.resolve(uploadsDir) + path.sep)) {
-            return res.status(400).json({ message: "Invalid document path" });
-        }
-        if (!fs.existsSync(resolvedPath)) {
-            return res.status(404).json({ message: "The stored file is missing" });
-        }
-
-        // Rows written before the upload hardening stored the client filename
-        // verbatim, so strip any directory part before handing it to the browser.
-        return res.download(resolvedPath, path.basename(document.originalName));
+        return await redirectToDocument(res, document, { download: true });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -3087,7 +3194,11 @@ const verifySchema = async () => {
     }
 };
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    verifySchema().catch((error) => console.warn(`Schema check failed: ${error.message}`));
-});
+export default app;
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+        verifySchema().catch((error) => console.warn(`Schema check failed: ${error.message}`));
+    });
+}
