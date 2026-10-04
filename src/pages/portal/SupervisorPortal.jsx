@@ -1,5 +1,21 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import { CheckCircle2 } from "lucide-react";
+import TopicReviewPanel from "../../components/TopicReviewPanel";
+import SupervisorChapterReview from "../../components/SupervisorChapterReview";
+import { Feedback, StatusBadge } from "../../components/StatusBadge";
+import { SupervisorMeetingRequests } from "../../components/MeetingRequests";
 import { usePortalData } from "../../hooks/usePortalData";
+
+// Mirrors the stage list on the student dashboard so both portals agree on progress.
+const TIMELINE = [
+  "Proposal",
+  "Supervisor assigned",
+  "Chapter writing",
+  "Chapter review",
+  "Defense",
+  "Final submission",
+];
 
 export function SupervisorDashboard() {
   const { data } = usePortalData();
@@ -181,7 +197,7 @@ export function SupervisorStudentsPage() {
 }
 
 export function SupervisorReviewsPage() {
-  const { data } = usePortalData();
+  const { data, loading } = usePortalData();
   const reviews = (data?.reviews ?? []).filter(
     (review) => review && review.studentId != null,
   );
@@ -230,43 +246,6 @@ export function SupervisorReviewsPage() {
           })}
           {!reviews.length ? <p className="text-sm text-slate-500">No reviews assigned.</p> : null}
         </div>
-      </div>
-      <div className="space-y-3">
-        {reviews.length ? (
-          reviews.map((item) => {
-            const student = students.find(
-              (entry) => entry.id === item.studentId,
-            );
-            return (
-              <div
-                key={item.id}
-                className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
-              >
-                <div>
-                  <p className="font-medium text-slate-900">
-                    {student?.name || "Student"}
-                  </p>
-                  <p className="text-sm text-slate-500">
-                    {item.type} submitted{" "}
-                    {new Date(item.submittedAt).toLocaleDateString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                    {item.status}
-                  </span>
-                  <button className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white">
-                    Open review
-                  </button>
-                </div>
-              </div>
-            );
-          })
-        ) : (
-          <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
-            No reviews assigned yet.
-          </div>
-        )}
       </div>
     </div>
   );

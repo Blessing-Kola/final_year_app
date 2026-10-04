@@ -61,9 +61,10 @@ const SupervisorStudentsPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),
   "SupervisorStudentsPage",
 );
-const SupervisorReviewsPage = lazyNamed(
-  () => import("./pages/portal/SupervisorPortal"),
-  "SupervisorReviewsPage",
+const SupervisorReviewsPage = lazy(() =>
+  import("./pages/portal/SupervisorPortal").then((module) => ({
+    default: module.SupervisorReviewsPage,
+  })),
 );
 const SupervisorFeedbackPage = lazyNamed(
   () => import("./pages/portal/SupervisorPortal"),

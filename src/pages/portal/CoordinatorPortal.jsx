@@ -252,28 +252,41 @@ export function CoordinatorAssignmentsPage() {
 }
 
 export function CoordinatorProposalsPage() {
-  const { data } = usePortalData();
-  const projects = (Array.isArray(data?.projects) ? data.projects : []).filter(
-    (project) => project && project.studentId != null,
+  const { data, loading } = usePortalData();
+  const proposals = (Array.isArray(data?.proposals) ? data.proposals : []).filter(
+    (proposal) => proposal && proposal.id != null,
   );
+  const students = (Array.isArray(data?.students) ? data.students : []).filter(
+    (student) => student && student.id,
+  );
+
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
-      <div className="mt-4 space-y-3">
-        {projects.map((proposal) => {
-          const student = (
-            Array.isArray(data?.students) ? data.students : []
-          ).find((entry) => entry.id === proposal.studentId);
-          return (
-            <div
-              key={proposal.id}
-              className="flex items-center justify-between rounded-xl border border-slate-200 p-3"
-            >
-              <div>
-                <p className="font-medium text-slate-900">
-                  {student?.name || "Student"}
-                </p>
-                <p className="text-sm text-slate-500">{proposal.title}</p>
+    <div className="space-y-6">
+      <TopicReviewPanel
+        topics={data?.studentTopics}
+        loading={loading}
+        emptyMessage="No student topics have been submitted yet."
+      />
+
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-semibold text-slate-900">Proposals</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Proposals submitted by students whose topics have been accepted.
+        </p>
+        <div className="mt-4 space-y-3">
+          {proposals.map((proposal) => {
+            const student =
+              proposal.student || students.find((entry) => entry.id === proposal.studentId);
+            return (
+              <div
+                key={proposal.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 p-3"
+              >
+                <div>
+                  <p className="font-medium text-slate-900">{student?.name || "Student"}</p>
+                  <p className="text-sm text-slate-500">{proposal.title}</p>
+                </div>
+                <StatusBadge status={proposal.status} fallback="Draft" />
               </div>
             );
           })}

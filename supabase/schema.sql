@@ -93,6 +93,38 @@ create table if not exists public.project_topics (
   "createdAt" timestamptz not null default now()
 );
 
+-- A student's own submitted project topic, reviewed by their supervisor/coordinator.
+create table if not exists public.student_topics (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null unique references public.users(id) on delete cascade,
+  title text not null,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'declined')),
+  "declineReason" text,
+  "submittedAt" timestamptz not null default now(),
+  "reviewedAt" timestamptz,
+  "reviewedBy" uuid references public.users(id) on delete set null
+);
+
+create index if not exists student_topics_status_idx
+  on public.student_topics (status, "submittedAt" desc);
+
+-- A student's proposal. Can only be submitted once their topic is accepted.
+create table if not exists public.proposals (
+  id uuid primary key default gen_random_uuid(),
+  "studentId" uuid not null unique references public.users(id) on delete cascade,
+  title text not null,
+  description text,
+  "documentId" uuid references public.documents(id) on delete set null,
+  status text not null default 'draft'
+    check (status in ('draft', 'submitted', 'under_review', 'approved', 'rejected')),
+  "submittedAt" timestamptz,
+  "updatedAt" timestamptz not null default now()
+);
+
+create index if not exists proposals_status_idx
+  on public.proposals (status, "submittedAt" desc);
+
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   "studentId" uuid not null references public.users(id) on delete cascade,
