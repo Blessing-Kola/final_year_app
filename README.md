@@ -85,8 +85,9 @@ provides client-side route fallback for React Router.
 ### Backend Vercel project
 
 - Root Directory: `backend`
-- Runtime: Node.js; `backend/vercel.json` builds `server.js` as a Vercel
-  function and routes incoming requests to the exported Express application.
+- Runtime: Node.js; Vercel automatically detects the Express application
+  exported from `server.js`. Do not add a `builds` entry to `backend/vercel.json`:
+  it disables Vercel's project Build and Development Settings.
 - Environment variables:
   - `JWT_SECRET=<unique-high-entropy-secret>`
   - `SUPABASE_URL=https://<project-ref>.supabase.co`
